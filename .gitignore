@@ -1,0 +1,267 @@
+# Discord Bot .gitignore
+
+# ========================
+# Environment & Secrets
+# ========================
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*.local
+
+# Bot tokens and sensitive data
+config.json
+secrets.json
+*.key
+*.pem
+
+# ========================
+# Node.js Dependencies
+# ========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Package manager files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ========================
+# Build Output
+# ========================
+dist/
+build/
+out/
+lib/
+*.tsbuildinfo
+
+# TypeScript cache
+*.tscache
+
+# ========================
+# Audio Files (Memes)
+# ========================
+audio/
+sounds/
+memes/
+*.mp3
+*.wav
+*.ogg
+*.m4a
+*.flac
+
+# Exception: Keep a sample or default files
+!audio/sample.mp3
+!audio/README.md
+
+# ========================
+# Logs & Debug
+# ========================
+logs/
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+.nyc_output
+
+# ========================
+# IDE & Editors
+# ========================
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# ========================
+# Operating System
+# ========================
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ========================
+# Database & Storage
+# ========================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# MongoDB
+*.mongodb
+
+# ========================
+# Temporary Files
+# ========================
+tmp/
+temp/
+.tmp/
+.temp/
+*.tmp
+*.temp
+
+# ========================
+# Backup Files
+# ========================
+*.bak
+*.backup
+*.old
+*.orig
+
+# ========================
+# Docker
+# ========================
+Dockerfile.local
+docker-compose.override.yml
+.dockerignore
+
+# ========================
+# Cloud & Deployment
+# ========================
+.aws/
+.gcp/
+.azure/
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Serverless Framework
+.serverless/
+
+# PM2
+ecosystem.config.js
+
+# ========================
+# Testing
+# ========================
+test-results/
+coverage/
+.jest/
+.mocha/
+
+# ========================
+# Miscellaneous
+# ========================
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.vuepress/dist/
+.serverless/
+.fusebox/
+.dynamodb/
+
+# ESLint cache
+.eslintcache
+
+# Prettier cache
+.prettiercache
+
+# Stylelint cache
+.stylelintcache
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env.test
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# ========================
+# Custom Project Files
+# ========================
+# Add any project-specific files here
+# userdata/
+# custom-config/
