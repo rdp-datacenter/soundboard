@@ -9,8 +9,8 @@ import {
   AudioPlayerStatus
 } from '@discordjs/voice';
 import fs from 'fs';
-import { CommandHandler } from './handlers/commandHandler';
-import { BotContext } from './types/Command';
+import { CommandHandler } from '@/handlers/commandHandler';
+import { BotContext } from '@/types/Command';
 
 // Bot configuration
 const TOKEN = process.env.DISCORD_TOKEN!;
@@ -26,6 +26,7 @@ class MusicBot {
   private client: Client;
   private audioPlayer = createAudioPlayer();
   private currentConnection: any = null;
+  private currentVolume: number = 0.5; // Default 50% volume
   private commandHandler: CommandHandler;
 
   constructor() {
@@ -45,6 +46,7 @@ class MusicBot {
   private setupEventHandlers() {
     this.client.once('ready', () => {
       console.log(`🎵 ${this.client.user?.tag} is online!`);
+      console.log(`🔊 Default volume set to ${Math.round(this.currentVolume * 100)}%`);
       this.client.user?.setActivity('🎵 MP3 memes', { type: ActivityType.Listening });
       
       // Register commands
@@ -90,8 +92,21 @@ class MusicBot {
       audioPlayer: this.audioPlayer,
       currentConnection: this.currentConnection,
       audioFolder: AUDIO_FOLDER,
+      currentVolume: this.currentVolume,
       setConnection: (connection: any) => {
         this.currentConnection = connection;
+      },
+      setVolume: (volume: number) => {
+        this.currentVolume = Math.max(0, Math.min(1, volume)); // Clamp between 0 and 1
+        console.log(`🔊 [VOLUME] Volume changed to ${Math.round(this.currentVolume * 100)}%`);
+        
+        // If currently playing, update the volume immediately
+        if (this.currentConnection && this.audioPlayer.state.status === AudioPlayerStatus.Playing) {
+          const resource = (this.audioPlayer.state as any).resource;
+          if (resource && resource.volume) {
+            resource.volume.setVolume(this.currentVolume);
+          }
+        }
       }
     };
   }

@@ -1,5 +1,5 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import { Command, CommandContext } from '../types/Command';
+import { Command, CommandContext } from '@/types/Command';
 import { getAvailableFiles } from './play';
 
 export const listCommand: Command = {

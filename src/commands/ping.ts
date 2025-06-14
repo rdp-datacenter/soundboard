@@ -1,5 +1,5 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder, Message } from 'discord.js';
-import { Command, TextCommand, CommandContext } from '../types/Command';
+import { Command, TextCommand, CommandContext } from '@/types/Command';
 
 export const pingCommand: Command = {
   data: new SlashCommandBuilder()
@@ -8,10 +8,17 @@ export const pingCommand: Command = {
 
   async execute(interaction: ChatInputCommandInteraction, context: CommandContext) {
     const { client } = context;
-    const sent = await interaction.reply({ content: '🏓 Pinging...', fetchReply: true });
     
+    // Get timestamp before reply
+    const startTime = Date.now();
+    
+    // Send initial reply
+    await interaction.reply({ content: '🏓 Pinging...' });
+    
+    // Calculate API latency
+    const endTime = Date.now();
     const wsLatency = client.ws.ping;
-    const apiLatency = sent.createdTimestamp - interaction.createdTimestamp;
+    const apiLatency = endTime - startTime;
     
     const embed = new EmbedBuilder()
       .setTitle('🏓 Pong!')
@@ -32,10 +39,14 @@ export const pingTextCommand: TextCommand = {
   
   async execute(message: Message, args: string[], context: CommandContext) {
     const { client } = context;
+    
+    // Get timestamp before reply
+    const startTime = Date.now();
     const sent = await message.reply('🏓 Pinging...');
+    const endTime = Date.now();
     
     const wsLatency = client.ws.ping;
-    const apiLatency = sent.createdTimestamp - message.createdTimestamp;
+    const apiLatency = endTime - startTime;
     
     const embed = new EmbedBuilder()
       .setTitle('🏓 Pong!')

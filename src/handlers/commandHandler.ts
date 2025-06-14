@@ -1,12 +1,13 @@
 import { Collection, ChatInputCommandInteraction, Message, REST, Routes } from 'discord.js';
-import { Command, TextCommand, BotContext } from '../types/Command';
+import { Command, TextCommand, BotContext } from '@/types/Command';
 
 // Import all commands
-import { playCommand, playTextCommand, handleMention, getAvailableFiles } from '../commands/play';
-import { stopCommand } from '../commands/stop';
-import { listCommand } from '../commands/list';
-import { uploadCommand } from '../commands/upload';
-import { pingCommand, pingTextCommand } from '../commands/ping';
+import { playCommand, playTextCommand, handleMention, getAvailableFiles } from '@/commands/play';
+import { stopCommand } from '@/commands/stop';
+import { listCommand } from '@/commands/list';
+import { uploadCommand } from '@/commands/upload';
+import { pingCommand, pingTextCommand } from '@/commands/ping';
+import { volumeCommand, volumeTextCommand } from '@/commands/volume';
 
 export class CommandHandler {
   private commands: Collection<string, Command> = new Collection();
@@ -23,7 +24,8 @@ export class CommandHandler {
       stopCommand,
       listCommand,
       uploadCommand,
-      pingCommand
+      pingCommand,
+      volumeCommand
     ];
 
     slashCommands.forEach(command => {
@@ -33,7 +35,8 @@ export class CommandHandler {
     // Load text commands
     const textCommandsList = [
       playTextCommand,
-      pingTextCommand
+      pingTextCommand,
+      volumeTextCommand
     ];
 
     textCommandsList.forEach(command => {

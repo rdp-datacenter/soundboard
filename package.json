@@ -5,8 +5,8 @@
     "main": "dist/index.js",
     "scripts": {
         "build": "tsc",
-        "start": "node dist/index.js",
-        "dev": "ts-node src/index.ts",
+        "start": "node -r tsconfig-paths/register dist/index.js",
+        "dev": "ts-node -r tsconfig-paths/register src/index.ts",
         "watch": "tsc -w"
     },
     "keywords": [
@@ -29,6 +29,7 @@
     "devDependencies": {
         "@types/node": "^20.19.0",
         "ts-node": "^10.9.2",
+        "tsconfig-paths": "^4.2.0",
         "typescript": "^5.8.3"
     },
     "engines": {
