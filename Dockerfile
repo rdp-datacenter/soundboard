@@ -7,7 +7,7 @@ WORKDIR /usr/src/app
 COPY . .
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm i
 
 # Build Bot
 RUN npm run build
