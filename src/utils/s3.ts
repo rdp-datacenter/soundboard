@@ -4,7 +4,8 @@ import {
   DeleteObjectCommand, 
   ListObjectsV2Command,
   HeadObjectCommand,
-  GetObjectCommand
+  GetObjectCommand,
+  CopyObjectCommand
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Readable } from 'stream';
@@ -247,6 +248,62 @@ export class S3Service {
       throw error;
     }
   }
+
+  /**
+ * Rename a file in S3 (copy and delete operation)
+ * Note: S3 doesn't have a native rename operation, so we implement it as copy + delete
+ */
+async renameFile(
+  currentFileName: string, 
+  newFileName: string
+): Promise<string> {
+  try {
+    // 1. Make sure files are sanitized
+    const currentKey = this.sanitizeFileName(currentFileName);
+    const newKey = this.sanitizeFileName(newFileName);
+    
+    // 2. Prepare the full S3 keys with folder prefix
+    const sourceKey = `${this.folderPrefix}${currentKey}`;
+    const destinationKey = `${this.folderPrefix}${newKey}`;
+    
+    // 3. Set up the copy command (copying from same bucket)
+    const copyParams = {
+      Bucket: this.bucketName,
+      CopySource: `${this.bucketName}/${sourceKey}`,
+      Key: destinationKey,
+      ContentType: 'audio/mpeg',
+      CacheControl: 'max-age=31536000', // 1 year cache
+      MetadataDirective: 'COPY', // Copy the metadata from the source
+    };
+    
+    // 4. Execute the copy operation
+    const copyCommand = {
+      Bucket: copyParams.Bucket,
+      CopySource: copyParams.CopySource,
+      Key: copyParams.Key,
+      ContentType: copyParams.ContentType,
+      CacheControl: copyParams.CacheControl,
+      MetadataDirective: copyParams.MetadataDirective as 'COPY' | 'REPLACE',
+    };
+    
+    await this.s3Client.send(new CopyObjectCommand(copyCommand));
+    
+    // 5. Delete the original file
+    const deleteCommand = new DeleteObjectCommand({
+      Bucket: this.bucketName,
+      Key: sourceKey,
+    });
+    
+    await this.s3Client.send(deleteCommand);
+    
+    console.log(`✅ [S3] Renamed: ${sourceKey} → ${destinationKey}`);
+    return this.getPublicUrl(destinationKey);
+    
+  } catch (error) {
+    console.error('❌ [S3] Rename failed:', error);
+    throw new Error(`Failed to rename file: ${error}`);
+  }
+}
 
   /**
    * Get bucket statistics

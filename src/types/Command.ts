@@ -3,7 +3,8 @@ import {
   SlashCommandBuilder, 
   SlashCommandOptionsOnlyBuilder,
   Client, 
-  Message 
+  Message,
+  AutocompleteInteraction
 } from 'discord.js';
 import { AudioPlayer } from '@discordjs/voice';
 import { S3Service } from '@/utils/s3';
@@ -22,6 +23,8 @@ export interface CommandContext {
 export interface Command {
   data: SlashCommandBuilder | SlashCommandOptionsOnlyBuilder;
   execute: (interaction: ChatInputCommandInteraction, context: CommandContext) => Promise<void>;
+  // Optional autocomplete handler for commands that support it
+  autocomplete?: (interaction: AutocompleteInteraction, context: CommandContext) => Promise<void>;
 }
 
 export interface TextCommand {

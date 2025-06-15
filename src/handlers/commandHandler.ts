@@ -180,7 +180,7 @@ export class CommandHandler {
           const filtered = files.filter(file => 
             file.toLowerCase().includes(focusedValue.toLowerCase())
           ).slice(0, 25);
-
+  
           await interaction.respond(
             filtered.map(file => ({ name: file, value: file }))
           );
@@ -190,7 +190,7 @@ export class CommandHandler {
         }
         return;
       }
-
+  
       // Handle delete command autocomplete with S3
       if (interaction.commandName === 'delete') {
         const focusedValue = interaction.options.getFocused();
@@ -200,7 +200,7 @@ export class CommandHandler {
           const filtered = files.filter(file => 
             file.toLowerCase().includes(focusedValue.toLowerCase())
           ).slice(0, 25);
-
+  
           await interaction.respond(
             filtered.map(file => ({ name: file, value: file }))
           );
@@ -210,10 +210,45 @@ export class CommandHandler {
         }
         return;
       }
-
+      
+      // Handle rename command autocomplete with S3
+      if (interaction.commandName === 'rename') {
+        // Find the command in the collection
+        const command = this.commands.get('rename');
+        
+        // If the command has an autocomplete handler, use it
+        if (command && 'autocomplete' in command && typeof command.autocomplete === 'function') {
+          await command.autocomplete(interaction, context);
+          return;
+        }
+        
+        // Fallback to basic autocomplete if the command doesn't have a specific handler
+        const focusedOption = interaction.options.getFocused(true);
+        
+        try {
+          if (focusedOption.name === 'current') {
+            const files = await this.getAvailableFilesFromS3(context);
+            const filtered = files.filter(file => 
+              file.toLowerCase().includes(focusedOption.value.toLowerCase())
+            ).slice(0, 25);
+  
+            await interaction.respond(
+              filtered.map(file => ({ name: file, value: file }))
+            );
+          } else {
+            // For the new filename, don't offer suggestions
+            await interaction.respond([]);
+          }
+        } catch (error) {
+          console.error('❌ [S3] Autocomplete error for rename command:', error);
+          await interaction.respond([]);
+        }
+        return;
+      }
+  
       // Default empty response for unhandled autocomplete
       await interaction.respond([]);
-
+  
     } catch (error) {
       console.error('❌ Error in autocomplete:', error);
       try {
@@ -222,7 +257,7 @@ export class CommandHandler {
         console.error('❌ Failed to send empty autocomplete response:', responseError);
       }
     }
-  }
+  }  
 
   // Helper method to get available files from S3
   private async getAvailableFilesFromS3(context: BotContext): Promise<string[]> {
