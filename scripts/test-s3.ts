@@ -1,4 +1,3 @@
-// scripts/test-s3.ts
 import 'dotenv/config';
 import { S3Service } from '../src/utils/s3';
 
@@ -24,11 +23,11 @@ async function testS3Connection() {
     // Get bucket statistics
     console.log('\n3️⃣ Getting Bucket Statistics...');
     const stats = await s3Service.getBucketStats();
-    console.log(`   📊 Files: ${stats.fileCount}`);
+    console.log(`   📊 Files in audio folder: ${stats.fileCount}`);
     console.log(`   💾 Total Size: ${(stats.totalSize / 1024 / 1024).toFixed(2)} MB`);
     
     // List files
-    console.log('\n4️⃣ Listing Files...');
+    console.log('\n4️⃣ Listing Files in Audio Folder...');
     const files = await s3Service.listFiles();
     if (files.length > 0) {
       console.log(`   📁 Found ${files.length} files:`);
@@ -40,7 +39,7 @@ async function testS3Connection() {
         console.log(`      ... and ${files.length - 5} more files`);
       }
     } else {
-      console.log('   📁 No files found in bucket');
+      console.log('   📁 No files found in audio folder');
     }
     
     // Environment info
@@ -48,7 +47,10 @@ async function testS3Connection() {
     console.log(`   🪣 Bucket: ${process.env.S3_BUCKET_NAME}`);
     console.log(`   🌍 Region: ${process.env.AWS_REGION}`);
     console.log(`   🔗 Base URL: ${process.env.S3_BASE_URL}`);
-    console.log(`   📁 Folder: ${process.env.S3_FOLDER || 'audio/'}`);
+    
+    const folderPrefix = process.env.S3_FOLDER || 'audio';
+    console.log(`   📁 Audio Folder: ${folderPrefix}/`);
+    console.log(`   🔗 Audio URL Path: ${process.env.S3_BASE_URL}/${folderPrefix}/`);
     
     console.log('\n🎉 S3 integration test completed successfully!');
     return true;
@@ -100,8 +102,8 @@ function validateEnvironment(): boolean {
   }
 
   // Optional variables
-  const folder = process.env.S3_FOLDER || 'audio/';
-  console.log(`✅ S3 folder configuration: ${folder}`);
+  const folder = process.env.S3_FOLDER || 'audio';
+  console.log(`✅ Audio folder configuration: ${folder}/`);
   
   return true;
 }

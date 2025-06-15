@@ -49,6 +49,9 @@ export const cleanupCommand: Command = {
         return;
       }
 
+      // Get the folder name for display
+      const folderName = process.env.S3_FOLDER || 'audio';
+
       // Get initial bucket statistics
       const initialStats = await s3Service.getBucketStats();
       const initialSizeMB = (initialStats.totalSize / 1024 / 1024).toFixed(2);
@@ -62,7 +65,7 @@ export const cleanupCommand: Command = {
       const spaceSavedMB = ((initialStats.totalSize - finalStats.totalSize) / 1024 / 1024).toFixed(2);
       
       // Log the cleanup
-      console.log(`🧹 [CLEANUP] ${member.displayName} cleaned ${cleanedFiles.length} files from S3, saved ${spaceSavedMB}MB`);
+      console.log(`🧹 [CLEANUP] ${member.displayName} cleaned ${cleanedFiles.length} files from S3 ${folderName}/ folder, saved ${spaceSavedMB}MB`);
       
       const embed = new EmbedBuilder()
         .setTitle('🧹 Cloud Storage Cleanup Complete')
@@ -79,7 +82,7 @@ export const cleanupCommand: Command = {
           { name: '💾 Space Saved', value: `${spaceSavedMB} MB`, inline: true },
           
           // Cloud Information
-          { name: '☁️ Storage Location', value: 'AWS S3 Cloud Storage', inline: true },
+          { name: '☁️ Storage Location', value: `AWS S3 (${folderName}/ folder)`, inline: true },
           { name: '🌍 Region', value: process.env.AWS_REGION || 'Unknown', inline: true },
           { name: '👤 Performed by', value: member.displayName, inline: true }
         )

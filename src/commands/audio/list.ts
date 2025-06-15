@@ -34,12 +34,15 @@ function showSimpleListFromButton(
       return `${number}. **${file.name}** (${size} KB)`;
     }).join('\n');
 
+    // Get the folder name for display
+    const folderName = process.env.S3_FOLDER || 'audio';
+
     return new EmbedBuilder()
       .setTitle('🎵 Available MP3 Files')
       .setDescription(fileList)
       .addFields(
         { name: '📊 Storage Stats', value: `**${files.length}** files • **${totalSizeMB} MB** total`, inline: true },
-        { name: '☁️ Source', value: 'AWS S3 Cloud Storage', inline: true },
+        { name: '☁️ Source', value: `AWS S3 (${folderName}/ folder)`, inline: true },
         { name: '📄 Page', value: `${page + 1} of ${totalPages}`, inline: true }
       )
       .setColor(0x00AE86)
@@ -78,6 +81,46 @@ function showSimpleListFromButton(
   return buttonInteraction.update({
     embeds: [generateEmbed(currentPage)],
     components: generateComponents(currentPage)
+  }).then(response => {
+    // Handle button interactions
+    const collector = response.createMessageComponentCollector({
+      componentType: ComponentType.Button,
+      time: 300000 // 5 minutes
+    });
+
+    collector.on('collect', async (subButtonInteraction: ButtonInteraction) => {
+      if (subButtonInteraction.user.id !== buttonInteraction.user.id) {
+        await subButtonInteraction.reply({
+          content: 'You can only interact with your own list command!',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      if (subButtonInteraction.customId === 'list_prev') {
+        currentPage = Math.max(0, currentPage - 1);
+        await subButtonInteraction.update({
+          embeds: [generateEmbed(currentPage)],
+          components: generateComponents(currentPage)
+        });
+      } else if (subButtonInteraction.customId === 'list_next') {
+        currentPage = Math.min(totalPages - 1, currentPage + 1);
+        await subButtonInteraction.update({
+          embeds: [generateEmbed(currentPage)],
+          components: generateComponents(currentPage)
+        });
+      } else if (subButtonInteraction.customId === 'list_detailed') {
+        await showDetailedListFromButton(subButtonInteraction, files, totalSizeMB);
+      }
+    });
+
+    collector.on('end', async () => {
+      try {
+        await response.edit({ components: [] });
+      } catch (error) {
+        // Ignore errors when editing expired interactions
+      }
+    });
   });
 }
 
@@ -95,11 +138,14 @@ function showDetailedListFromButton(
     const end = start + itemsPerPage;
     const pageFiles = files.slice(start, end);
     
+    // Get the folder name for display
+    const folderName = process.env.S3_FOLDER || 'audio';
+    
     const embed = new EmbedBuilder()
       .setTitle('📋 Detailed File Information')
       .setColor(0x0099ff)
       .setTimestamp()
-      .setFooter({ text: 'RDP Datacenter • Detailed Cloud Storage View' });
+      .setFooter({ text: `RDP Datacenter • ${folderName}/ folder • Cloud Storage` });
 
     pageFiles.forEach((file, index) => {
       const number = start + index + 1;
@@ -189,7 +235,7 @@ function showDetailedListFromButton(
 
     collector.on('end', async () => {
       try {
-        await buttonInteraction.editReply({ components: [] });
+        await response.edit({ components: [] });
       } catch (error) {
         // Ignore errors when editing expired interactions
       }
@@ -217,9 +263,12 @@ export const listCommand: Command = {
       const files = await s3Service.listFiles();
       
       if (files.length === 0) {
+        // Get the folder name for display
+        const folderName = process.env.S3_FOLDER || 'audio';
+        
         const embed = new EmbedBuilder()
           .setTitle('📁 Cloud Storage Empty')
-          .setDescription('No MP3 files available. Upload some using `/upload`!')
+          .setDescription(`No MP3 files available in the ${folderName}/ folder. Upload some using \`/upload\`!`)
           .setColor(0xff8800)
           .setFooter({ text: 'RDP Datacenter • Cloud Storage' });
           
@@ -273,12 +322,15 @@ async function showSimpleList(
       return `${number}. **${file.name}** (${size} KB)`;
     }).join('\n');
 
+    // Get the folder name for display
+    const folderName = process.env.S3_FOLDER || 'audio';
+
     return new EmbedBuilder()
       .setTitle('🎵 Available MP3 Files')
       .setDescription(fileList)
       .addFields(
         { name: '📊 Storage Stats', value: `**${files.length}** files • **${totalSizeMB} MB** total`, inline: true },
-        { name: '☁️ Source', value: 'AWS S3 Cloud Storage', inline: true },
+        { name: '☁️ Source', value: `AWS S3 (${folderName}/ folder)`, inline: true },
         { name: '📄 Page', value: `${page + 1} of ${totalPages}`, inline: true }
       )
       .setColor(0x00AE86)
@@ -374,11 +426,14 @@ async function showDetailedList(
     const end = start + itemsPerPage;
     const pageFiles = files.slice(start, end);
     
+    // Get the folder name for display
+    const folderName = process.env.S3_FOLDER || 'audio';
+    
     const embed = new EmbedBuilder()
       .setTitle('📋 Detailed File Information')
       .setColor(0x0099ff)
       .setTimestamp()
-      .setFooter({ text: 'RDP Datacenter • Detailed Cloud Storage View' });
+      .setFooter({ text: `RDP Datacenter • ${folderName}/ folder • Cloud Storage` });
 
     pageFiles.forEach((file, index) => {
       const number = start + index + 1;

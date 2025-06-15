@@ -64,11 +64,14 @@ export const deleteCommand: Command = {
         console.warn('⚠️ [S3] Could not get file info before deletion:', error);
       }
 
+      // Get the folder name for display
+      const folderName = process.env.S3_FOLDER || 'audio';
+
       // Delete the file from S3
       await s3Service.deleteFile(filename);
       
       // Log the deletion
-      console.log(`🗑️ [DELETE] ${member.displayName} (${member.id}) deleted from S3: ${filename}`);
+      console.log(`🗑️ [DELETE] ${member.displayName} (${member.id}) deleted from S3 ${folderName}/ folder: ${filename}`);
       
       const embed = new EmbedBuilder()
         .setTitle('🗑️ Audio File Deleted')
@@ -76,7 +79,7 @@ export const deleteCommand: Command = {
         .addFields(
           { name: '👤 Deleted by', value: member.displayName, inline: true },
           { name: '📁 File', value: filename, inline: true },
-          { name: '☁️ Storage', value: 'AWS S3 Cloud Storage', inline: true }
+          { name: '☁️ Storage', value: `AWS S3 (${folderName}/ folder)`, inline: true }
         )
         .setColor(0xff4444)
         .setTimestamp()

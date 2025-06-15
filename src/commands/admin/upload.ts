@@ -88,8 +88,11 @@ export const uploadCommand: Command = {
         'audio/mpeg'
       );
       
+      // Get the folder name for display
+      const folderName = process.env.S3_FOLDER || 'audio';
+      
       // Log the upload for audit purposes
-      console.log(`📁 [UPLOAD] ${member.displayName} (${member.id}) uploaded to S3: ${attachment.name}`);
+      console.log(`📁 [UPLOAD] ${member.displayName} (${member.id}) uploaded to S3 ${folderName}/ folder: ${attachment.name}`);
       
       const embed = new EmbedBuilder()
         .setTitle('✅ Audio File Uploaded Successfully!')
@@ -98,7 +101,7 @@ export const uploadCommand: Command = {
           { name: '📁 File Name', value: attachment.name, inline: true },
           { name: '📏 File Size', value: `${(attachment.size / 1024 / 1024).toFixed(2)} MB`, inline: true },
           { name: '👤 Uploaded by', value: member.displayName, inline: true },
-          { name: '☁️ Storage', value: 'AWS S3 Cloud Storage', inline: true },
+          { name: '☁️ Storage', value: `AWS S3 (${folderName}/ folder)`, inline: true },
           { name: '🌐 Access', value: 'Available globally', inline: true },
           { name: '🎵 How to Play', value: `Use \`/play ${attachment.name}\` or \`@RDP Soundboard ${attachment.name}\``, inline: false }
         )

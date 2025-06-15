@@ -138,8 +138,13 @@ async function playAudio(
     } catch (streamError) {
       console.error('❌ [S3] Stream error, falling back to URL:', streamError);
       
+      // Get the folder prefix to properly construct the URL
+      const folderPrefix = process.env.S3_FOLDER || 'audio';
+      const prefix = folderPrefix.endsWith('/') ? folderPrefix : `${folderPrefix}/`;
+      
       // Option 2: Fallback to public URL streaming
-      const fileUrl = s3Service.getPublicUrl(s3Service['sanitizeFileName'](fileName));
+      const sanitizedFileName = s3Service.sanitizeFileName(fileName);
+      const fileUrl = `${process.env.S3_BASE_URL}/${prefix}${sanitizedFileName}`;
       
       audioResource = createAudioResource(fileUrl, {
         inlineVolume: true

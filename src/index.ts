@@ -44,6 +44,16 @@ function validateEnvironment(): void {
     console.error('💡 For S3 integration, ensure all AWS variables are set in your .env file');
     process.exit(1);
   }
+
+  // Validate and normalize audio folder configuration
+  const s3Folder = process.env.S3_FOLDER || 'audio';
+  console.log(`📁 Audio folder configuration: ${s3Folder}/`);
+  
+  // Ensure S3_FOLDER ends with '/' in environment for consistency
+  if (process.env.S3_FOLDER && !process.env.S3_FOLDER.endsWith('/')) {
+    process.env.S3_FOLDER = `${process.env.S3_FOLDER}/`;
+    console.log(`📁 Normalized S3_FOLDER to: ${process.env.S3_FOLDER}`);
+  }
 }
 
 // Ensure local audio folder exists (for backward compatibility)
@@ -99,9 +109,10 @@ class CloudSoundboardBot {
           
           // Get initial bucket stats
           const stats = await this.s3Service.getBucketStats();
-          console.log(`📊 S3 Stats: ${stats.fileCount} files, ${(stats.totalSize / 1024 / 1024).toFixed(2)}MB`);
+          const folderName = process.env.S3_FOLDER || 'audio';
+          console.log(`📊 S3 Stats: ${stats.fileCount} files in ${folderName}/ folder, ${(stats.totalSize / 1024 / 1024).toFixed(2)}MB`);
           
-          this.client.user?.setActivity(`🎵 ${stats.fileCount} cloud sounds`, { type: ActivityType.Listening });
+          this.client.user?.setActivity(`🎵 ${stats.fileCount} sounds in ${folderName}/`, { type: ActivityType.Listening });
         } else {
           console.warn('⚠️ S3 connection failed - some features may not work');
           this.client.user?.setActivity('🎵 Cloud sounds (offline)', { type: ActivityType.Listening });
@@ -118,7 +129,9 @@ class CloudSoundboardBot {
       const commands = this.commandHandler.getCommandsList();
       console.log(`📋 Available commands:`, commands);
       
-      console.log('🚀 RDP Soundboard is ready with cloud storage!');
+      // Get the folder name for display
+      const folderName = process.env.S3_FOLDER || 'audio';
+      console.log(`🚀 RDP Soundboard is ready with cloud storage in ${folderName}/ folder!`);
     });
 
     // Handle all interactions
@@ -249,7 +262,8 @@ class CloudSoundboardBot {
 }
 
 // Start the bot
-console.log('🚀 Starting RDP Soundboard with Cloud Storage...');
+const folderName = process.env.S3_FOLDER || 'audio';
+console.log(`🚀 Starting RDP Soundboard with Cloud Storage (${folderName}/ folder)...`);
 const bot = new CloudSoundboardBot();
 bot.start();
 

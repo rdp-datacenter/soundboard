@@ -36,6 +36,9 @@ export const statsCommand: Command = {
       // Test S3 connection
       const s3Connected = await s3Service.testConnection();
 
+      // Get the folder name for display
+      const folderName = process.env.S3_FOLDER || 'audio';
+
       // Get bot uptime
       const uptime = process.uptime();
       const days = Math.floor(uptime / 86400);
@@ -90,7 +93,7 @@ export const statsCommand: Command = {
         embed.addFields(
           { name: '🪣 S3 Bucket', value: bucketName, inline: true },
           { name: '🌍 AWS Region', value: region, inline: true },
-          { name: '🔄 Storage Type', value: 'Standard (S3)', inline: true }
+          { name: '📁 Audio Folder', value: `${folderName}/`, inline: true }
         );
 
         // Estimate monthly cost (rough calculation)

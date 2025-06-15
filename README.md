@@ -142,11 +142,20 @@ src/
 - **Bucket Setup**: Create S3 bucket with public read access
 - **Storage Location**: Global AWS infrastructure
 - **File Organization**: Files stored in configurable folders (default: `audio/`)
+- **Folder Structure**: All MP3 files are stored in the S3_FOLDER path (e.g., `audio/yourfile.mp3`)
 - **File Limits**: Virtually unlimited storage capacity
 - **Supported Formats**: MP3 files only
 - **Access**: Files accessible via direct S3 URLs
 - **Performance**: CDN-like global distribution
 - **Auto-Cleanup**: Bot automatically leaves voice channels after playback
+
+### S3 Folder Organization
+- **Folder Path**: Set via `S3_FOLDER` environment variable (default: "audio")
+- **Benefits**: Better organization, easier management, cleaner bucket structure
+- **File References**: All commands automatically use the configured folder
+- **URL Format**: `https://your-bucket.s3.region.amazonaws.com/audio/filename.mp3`
+- **Flexible**: Can be changed to any folder name (e.g., "sounds", "effects", "music")
+- **Path Display**: All commands display the current folder path for clarity
 
 ### Local Storage (Backward Compatibility)
 - **Local Files**: `./audio/` directory (deprecated)
@@ -160,12 +169,16 @@ src/
 
 ## 🛠️ Development
 
-### Scripts
+### Available Scripts
+The following npm scripts are available in `package.json`:
+
 ```bash
-npm run dev      # Development mode with hot reload
-npm run build    # Compile TypeScript
-npm run start    # Start production bot
-npm run watch    # Watch mode compilation
+npm run build       # Compile TypeScript using tsc and tsc-alias
+npm run test:s3     # Test S3 connection and configuration
+npm run start       # Start the bot from compiled JavaScript
+npm run dev         # Run the bot directly using ts-node (development mode)
+npm run watch       # Watch for changes and recompile TypeScript
+npm run clean       # Remove the dist directory
 ```
 
 ### Adding New Commands
@@ -186,6 +199,7 @@ npm run watch    # Watch mode compilation
 ## 📋 Features in Detail
 
 - **☁️ Cloud-First Architecture**: Files stored in AWS S3 for global accessibility
+- **📁 Organized Folder Structure**: All files stored in a dedicated S3 folder for better organization
 - **🔍 Auto-Discovery**: Commands are automatically loaded from subfolders
 - **🛡️ Type Safety**: Full TypeScript support with proper error handling  
 - **🎛️ Volume Control**: Real-time volume adjustment during playback
@@ -225,6 +239,6 @@ If you encounter any issues or have questions:
 ---
 
 <div align="center">
-  <strong>Made with ❤️ for Discord communities</strong><br>
+  <strong>Made with ❤️ for Discord Communities</strong><br>
   <sub>Keep your server entertained with quality sound effects and audio clips!</sub>
 </div>
