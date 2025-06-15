@@ -1,3 +1,4 @@
+// scripts/test-s3.ts
 import 'dotenv/config';
 import { S3Service } from '../src/utils/s3';
 
@@ -47,6 +48,7 @@ async function testS3Connection() {
     console.log(`   🪣 Bucket: ${process.env.S3_BUCKET_NAME}`);
     console.log(`   🌍 Region: ${process.env.AWS_REGION}`);
     console.log(`   🔗 Base URL: ${process.env.S3_BASE_URL}`);
+    console.log(`   📁 Folder: ${process.env.S3_FOLDER || 'audio/'}`);
     
     console.log('\n🎉 S3 integration test completed successfully!');
     return true;
@@ -96,6 +98,10 @@ function validateEnvironment(): boolean {
     console.log('\n💡 Make sure your .env file contains all required AWS variables');
     return false;
   }
+
+  // Optional variables
+  const folder = process.env.S3_FOLDER || 'audio/';
+  console.log(`✅ S3 folder configuration: ${folder}`);
   
   return true;
 }
