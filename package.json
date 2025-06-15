@@ -32,10 +32,12 @@
         "dotenv": "^16.5.0",
         "ffmpeg-static": "^5.2.0",
         "libsodium-wrappers": "^0.7.15",
-        "opusscript": "^0.0.8"
+        "opusscript": "^0.0.8",
+        "pg": "^8.16.0"
     },
     "devDependencies": {
         "@types/node": "^20.19.0",
+        "@types/pg": "^8.15.4",
         "rimraf": "^6.0.1",
         "ts-node": "^10.9.2",
         "tsc-alias": "^1.8.16",

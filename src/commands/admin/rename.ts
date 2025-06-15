@@ -13,7 +13,7 @@ import {
   export const renameCommand: Command = {
     data: new SlashCommandBuilder()
       .setName('rename')
-      .setDescription('Rename an MP3 file in cloud storage (Admin only)')
+      .setDescription('Rename an MP3 file in this server\'s sound collection (Admin only)')
       .addStringOption(option =>
         option.setName('current')
           .setDescription('Current file name to rename')
@@ -29,7 +29,7 @@ import {
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext) {
-      const { s3Service } = context;
+      const { s3Service, guildId } = context;
       const member = interaction.member as GuildMember;
       
       // Check admin permissions
@@ -55,18 +55,18 @@ import {
         return;
       }
   
-      // Check if source file exists in S3
+      // Check if source file exists in S3 for this server
       try {
-        const fileExists = await s3Service.fileExists(currentFileName);
+        const fileExists = await s3Service.fileExists(currentFileName, guildId);
         if (!fileExists) {
           await interaction.reply({
-            content: `❌ File **${currentFileName}** not found in cloud storage!`,
+            content: `❌ File **${currentFileName}** not found in this server's sound collection!`,
             flags: MessageFlags.Ephemeral
           });
           return;
         }
       } catch (error) {
-        console.error('❌ [S3] Error checking file existence:', error);
+        console.error(`❌ [S3] Error checking file existence for server ${guildId}:`, error);
         await interaction.reply({
           content: '❌ Unable to access cloud storage. Please try again.',
           flags: MessageFlags.Ephemeral
@@ -76,16 +76,16 @@ import {
       
       // Check if destination file already exists
       try {
-        const destExists = await s3Service.fileExists(newFileName);
+        const destExists = await s3Service.fileExists(newFileName, guildId);
         if (destExists) {
           await interaction.reply({
-            content: `❌ File **${newFileName}** already exists in cloud storage! Please choose a different name or delete the existing file first.`,
+            content: `❌ File **${newFileName}** already exists in this server's sound collection! Please choose a different name or delete the existing file first.`,
             flags: MessageFlags.Ephemeral
           });
           return;
         }
       } catch (error) {
-        console.error('❌ [S3] Error checking destination file:', error);
+        console.error(`❌ [S3] Error checking destination file for server ${guildId}:`, error);
         await interaction.reply({
           content: '❌ Unable to check destination file. Please try again.',
           flags: MessageFlags.Ephemeral
@@ -99,46 +99,34 @@ import {
         // Get file info before renaming for the confirmation embed
         let fileInfo = null;
         try {
-          fileInfo = await s3Service.getFileInfo(currentFileName);
+          fileInfo = await s3Service.getFileInfo(currentFileName, guildId);
         } catch (error) {
           // Continue with renaming even if we can't get file info
-          console.warn('⚠️ [S3] Could not get file info before renaming:', error);
+          console.warn(`⚠️ [S3] Could not get file info before renaming for server ${guildId}:`, error);
         }
   
         // Get the folder name for display
         const folderName = process.env.S3_FOLDER || 'audio';
   
-        // 1. Copy the file to the new name
-        const fileStream = await s3Service.getFileStream(currentFileName);
-        const bufferChunks: Uint8Array[] = [];
-        
-        for await (const chunk of fileStream) {
-          bufferChunks.push(chunk);
-        }
-        
-        const fileBuffer = Buffer.concat(bufferChunks);
-        
-        // Upload with the new name
-        await s3Service.uploadFile(newFileName, fileBuffer, 'audio/mpeg');
-        
-        // 2. Delete the old file
-        await s3Service.deleteFile(currentFileName);
+        // Rename the file in S3 for this server
+        await s3Service.renameFile(currentFileName, newFileName, guildId);
         
         // Log the rename operation
-        console.log(`🔄 [RENAME] ${member.displayName} (${member.id}) renamed file in S3 ${folderName}/ folder: ${currentFileName} → ${newFileName}`);
+        console.log(`🔄 [RENAME] ${member.displayName} (${member.id}) renamed file in server ${guildId}: ${currentFileName} → ${newFileName}`);
         
         const embed = new EmbedBuilder()
           .setTitle('✅ Audio File Renamed')
-          .setDescription(`Successfully renamed file in cloud storage.`)
+          .setDescription(`Successfully renamed file in this server's sound collection.`)
           .addFields(
             { name: '📁 Original Name', value: currentFileName, inline: true },
             { name: '📁 New Name', value: newFileName, inline: true },
             { name: '👤 Renamed by', value: member.displayName, inline: true },
-            { name: '☁️ Storage', value: `AWS S3 (${folderName}/ folder)`, inline: true }
+            { name: '☁️ Storage', value: `AWS S3 (${folderName}/${guildId}/)`, inline: true },
+            { name: '🏠 Server', value: interaction.guild?.name || guildId, inline: true }
           )
           .setColor(0x00AE86)
           .setTimestamp()
-          .setFooter({ text: 'RDP Datacenter • Cloud File Management' });
+          .setFooter({ text: `RDP Datacenter • ${interaction.guild?.name || 'Server'} Sound Collection` });
   
         // Add file size info if we got it
         if (fileInfo) {
@@ -158,15 +146,15 @@ import {
   
         // Update bucket stats for logging
         try {
-          const stats = await s3Service.getBucketStats();
-          console.log(`📊 [S3] After rename - Total files: ${stats.fileCount}, Total size: ${(stats.totalSize / 1024 / 1024).toFixed(2)}MB`);
+          const stats = await s3Service.getBucketStats(guildId);
+          console.log(`📊 [S3] After rename - Server ${guildId} stats: ${stats.fileCount} files, ${(stats.totalSize / 1024 / 1024).toFixed(2)}MB`);
         } catch (error) {
           // Don't fail the command if stats fail
-          console.error('⚠️ [S3] Failed to get bucket stats after rename:', error);
+          console.error(`⚠️ [S3] Failed to get bucket stats after rename for server ${guildId}:`, error);
         }
         
       } catch (error) {
-        console.error('❌ [ERROR] S3 Rename failed:', error);
+        console.error(`❌ [ERROR] S3 Rename failed for server ${guildId}:`, error);
         
         let errorMessage = '❌ Failed to rename file in cloud storage.';
         
@@ -193,13 +181,13 @@ import {
     
     // Add autocomplete handler for both current and new filename fields
     async autocomplete(interaction: AutocompleteInteraction, context: CommandContext) {
-      const { s3Service } = context;
+      const { s3Service, guildId } = context;
       const focusedOption = interaction.options.getFocused(true);
       
       try {
         if (focusedOption.name === 'current') {
-          // For current filename, show existing files
-          const files = await s3Service.listFiles();
+          // For current filename, show existing files for this server
+          const files = await s3Service.listFiles(guildId);
           const filenames = files.map(file => file.name);
           
           // Filter by what user has typed so far
@@ -213,7 +201,7 @@ import {
         } 
         else if (focusedOption.name === 'new') {
           // For new filename, suggest a variation of existing files
-          const files = await s3Service.listFiles();
+          const files = await s3Service.listFiles(guildId);
           const currentFileInput = interaction.options.getString('current') || '';
           const userInput = focusedOption.value.toLowerCase();
           
@@ -257,7 +245,7 @@ import {
           );
         }
       } catch (error) {
-        console.error('❌ [S3] Autocomplete error:', error);
+        console.error(`❌ [S3] Autocomplete error for server ${guildId}:`, error);
         // Return empty results on error
         await interaction.respond([]);
       }

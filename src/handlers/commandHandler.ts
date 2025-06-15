@@ -1,4 +1,3 @@
-// src/handlers/commandHandler.ts
 import { 
   Collection, 
   ChatInputCommandInteraction, 
@@ -113,7 +112,7 @@ export class CommandHandler {
     try {
       await command.execute(interaction, context);
     } catch (error) {
-      console.error('Error executing slash command:', error);
+      console.error(`❌ Error executing slash command in server ${context.guildId}:`, error);
       
       const errorMessage = '❌ There was an error while executing this command!';
       
@@ -143,69 +142,93 @@ export class CommandHandler {
           await message.reply('Please specify an MP3 file name! Example: `@RDP Soundboard filename.mp3`');
         }
       } catch (error) {
-        console.error('No mention handler found:', error);
+        console.error(`❌ No mention handler found for server ${context.guildId}:`, error);
         await message.reply('Please specify an MP3 file name! Example: `@RDP Soundboard filename.mp3`');
       }
       return;
     }
-
-    // Handle text commands
-    if (!message.content.startsWith('!')) return;
-
-    const args = message.content.slice(1).trim().split(/ +/);
+  
+    // Get server-specific prefix if in a guild
+    let prefix = '!'; // Default fallback prefix
+    try {
+      if (context.guildId !== 'global') {
+        const serverSettings = await context.dbService.getServerSettings(context.guildId);
+        prefix = serverSettings.prefix;
+      }
+    } catch (error) {
+      console.error(`❌ Error getting server prefix for ${context.guildId}:`, error);
+      // Continue with default prefix if there's an error
+    }
+  
+    // Check if message starts with the server's prefix
+    if (!message.content.startsWith(prefix)) return;
+  
+    const args = message.content.slice(prefix.length).trim().split(/ +/);
     const commandName = args.shift()?.toLowerCase();
-
+  
     if (!commandName) return;
-
+  
     const command = this.textCommands.get(commandName);
     
     if (!command) return;
-
+  
     try {
       await command.execute(message, args, context);
     } catch (error) {
-      console.error('Error executing text command:', error);
+      console.error(`❌ Error executing text command in server ${context.guildId}:`, error);
       await message.reply('❌ There was an error while executing this command!');
     }
   }
+  
 
   async handleAutocomplete(interaction: AutocompleteInteraction, context: BotContext): Promise<void> {
     try {
+      // Get the guild ID from the context
+      const { s3Service, guildId } = context;
+
       // Handle play command autocomplete with S3
       if (interaction.commandName === 'play') {
         const focusedValue = interaction.options.getFocused();
         
         try {
-          const files = await this.getAvailableFilesFromS3(context);
-          const filtered = files.filter(file => 
-            file.toLowerCase().includes(focusedValue.toLowerCase())
-          ).slice(0, 25);
-  
+          // Get server-specific files
+          const files = await s3Service.listFiles(guildId);
+          const filenames = files.map(file => file.name);
+          
+          // Filter by what user has typed so far
+          const filtered = filenames.filter(name => 
+            name.toLowerCase().includes(focusedValue.toLowerCase())
+          ).slice(0, 25); // Discord max choices is 25
+
           await interaction.respond(
             filtered.map(file => ({ name: file, value: file }))
           );
         } catch (error) {
-          console.error('❌ [S3] Autocomplete error for play command:', error);
+          console.error(`❌ [S3] Autocomplete error for play command for server ${guildId}:`, error);
           await interaction.respond([]);
         }
         return;
       }
-  
+
       // Handle delete command autocomplete with S3
       if (interaction.commandName === 'delete') {
         const focusedValue = interaction.options.getFocused();
         
         try {
-          const files = await this.getAvailableFilesFromS3(context);
-          const filtered = files.filter(file => 
-            file.toLowerCase().includes(focusedValue.toLowerCase())
+          // Get server-specific files
+          const files = await s3Service.listFiles(guildId);
+          const filenames = files.map(file => file.name);
+          
+          // Filter by what user has typed so far
+          const filtered = filenames.filter(name => 
+            name.toLowerCase().includes(focusedValue.toLowerCase())
           ).slice(0, 25);
-  
+
           await interaction.respond(
             filtered.map(file => ({ name: file, value: file }))
           );
         } catch (error) {
-          console.error('❌ [S3] Autocomplete error for delete command:', error);
+          console.error(`❌ [S3] Autocomplete error for delete command for server ${guildId}:`, error);
           await interaction.respond([]);
         }
         return;
@@ -227,11 +250,15 @@ export class CommandHandler {
         
         try {
           if (focusedOption.name === 'current') {
-            const files = await this.getAvailableFilesFromS3(context);
-            const filtered = files.filter(file => 
-              file.toLowerCase().includes(focusedOption.value.toLowerCase())
+            // Get server-specific files
+            const files = await s3Service.listFiles(guildId);
+            const filenames = files.map(file => file.name);
+            
+            // Filter by what user has typed so far
+            const filtered = filenames.filter(name => 
+              name.toLowerCase().includes(focusedOption.value.toLowerCase())
             ).slice(0, 25);
-  
+
             await interaction.respond(
               filtered.map(file => ({ name: file, value: file }))
             );
@@ -240,15 +267,15 @@ export class CommandHandler {
             await interaction.respond([]);
           }
         } catch (error) {
-          console.error('❌ [S3] Autocomplete error for rename command:', error);
+          console.error(`❌ [S3] Autocomplete error for rename command for server ${guildId}:`, error);
           await interaction.respond([]);
         }
         return;
       }
-  
+
       // Default empty response for unhandled autocomplete
       await interaction.respond([]);
-  
+
     } catch (error) {
       console.error('❌ Error in autocomplete:', error);
       try {
@@ -257,16 +284,19 @@ export class CommandHandler {
         console.error('❌ Failed to send empty autocomplete response:', responseError);
       }
     }
-  }  
+  }
 
-  // Helper method to get available files from S3
+  // Helper method to get available files from S3 for a specific server
   private async getAvailableFilesFromS3(context: BotContext): Promise<string[]> {
     try {
-      const { s3Service } = context;
-      const files = await s3Service.listFiles();
+      const { s3Service, guildId } = context; // Get the guild ID from context
+      
+      // Pass the guildId to the listFiles method
+      const files = await s3Service.listFiles(guildId);
+      
       return files.map((file: AudioFile) => file.name).sort();
     } catch (error) {
-      console.error('❌ [S3] Error getting available files for autocomplete:', error);
+      console.error(`❌ [S3] Error getting available files for server ${context.guildId}:`, error);
       return [];
     }
   }
@@ -319,7 +349,7 @@ export class CommandHandler {
     }
     
     // Admin commands
-    if (['upload', 'delete', 'cleanup', 'stats'].includes(commandName)) {
+    if (['upload', 'delete', 'rename', 'cleanup', 'stats'].includes(commandName)) {
       return 'Administration';
     }
     

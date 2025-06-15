@@ -13,16 +13,28 @@ export const cleanupCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('cleanup')
     .setDescription('Clean up empty or corrupted files from cloud storage (Owner only)')
+    .addBooleanOption(option =>
+      option.setName('global')
+        .setDescription('Clean up files across all servers (default: this server only)')
+        .setRequired(false)
+    )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction: ChatInputCommandInteraction, context: CommandContext) {
-    const { s3Service } = context;
+    const { s3Service, guildId } = context;
     const member = interaction.member as GuildMember;
+    const cleanGlobal = interaction.options.getBoolean('global') || false;
     
     // Check admin permissions (Owner only for destructive actions)
-    if (!PermissionChecker.isOwner(member)) {
+    if (cleanGlobal && !PermissionChecker.isOwner(member)) {
       await interaction.reply({
-        content: '❌ **Access Denied!** This command requires **Server Owner** permissions.',
+        content: '❌ **Access Denied!** Global cleanup requires **Bot Owner** permissions.',
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    } else if (!cleanGlobal && !PermissionChecker.isAdmin(member)) {
+      await interaction.reply({
+        content: '❌ **Access Denied!** Server cleanup requires **Administrator** permissions.',
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -52,58 +64,132 @@ export const cleanupCommand: Command = {
       // Get the folder name for display
       const folderName = process.env.S3_FOLDER || 'audio';
 
-      // Get initial bucket statistics
-      const initialStats = await s3Service.getBucketStats();
-      const initialSizeMB = (initialStats.totalSize / 1024 / 1024).toFixed(2);
-      
-      // Perform cleanup
-      const cleanedFiles = await s3Service.cleanupFiles();
-      
-      // Get updated statistics
-      const finalStats = await s3Service.getBucketStats();
-      const finalSizeMB = (finalStats.totalSize / 1024 / 1024).toFixed(2);
-      const spaceSavedMB = ((initialStats.totalSize - finalStats.totalSize) / 1024 / 1024).toFixed(2);
-      
-      // Log the cleanup
-      console.log(`🧹 [CLEANUP] ${member.displayName} cleaned ${cleanedFiles.length} files from S3 ${folderName}/ folder, saved ${spaceSavedMB}MB`);
-      
-      const embed = new EmbedBuilder()
-        .setTitle('🧹 Cloud Storage Cleanup Complete')
-        .setDescription(`Removed **${cleanedFiles.length}** corrupted or empty files from cloud storage.`)
-        .addFields(
-          // Cleanup Results
-          cleanedFiles.length > 0 ? 
-            { name: '🗑️ Deleted Files', value: cleanedFiles.slice(0, 10).join('\n') + (cleanedFiles.length > 10 ? `\n... and ${cleanedFiles.length - 10} more` : '') || 'None', inline: false } :
-            { name: '✅ Result', value: 'No cleanup needed - all files are healthy!', inline: false },
-          
-          // Statistics
-          { name: '📊 Before Cleanup', value: `${initialStats.fileCount} files\n${initialSizeMB} MB`, inline: true },
-          { name: '📊 After Cleanup', value: `${finalStats.fileCount} files\n${finalSizeMB} MB`, inline: true },
-          { name: '💾 Space Saved', value: `${spaceSavedMB} MB`, inline: true },
-          
-          // Cloud Information
-          { name: '☁️ Storage Location', value: `AWS S3 (${folderName}/ folder)`, inline: true },
-          { name: '🌍 Region', value: process.env.AWS_REGION || 'Unknown', inline: true },
-          { name: '👤 Performed by', value: member.displayName, inline: true }
-        )
-        .setColor(cleanedFiles.length > 0 ? 0xff8800 : 0x00ff00)
-        .setTimestamp()
-        .setFooter({ text: 'RDP Datacenter • Cloud Cleanup Complete' });
+      let totalCleanedFiles = 0;
+      let totalSpaceSaved = 0;
+      let cleanedFilesList: string[] = [];
 
-      // Add cost savings estimate if space was saved
-      if (parseFloat(spaceSavedMB) > 0) {
-        const monthlySavings = calculateMonthlySavings(parseFloat(spaceSavedMB));
-        if (monthlySavings > 0.001) {
-          embed.addFields(
-            { name: '💰 Est. Monthly Savings', value: `$${monthlySavings.toFixed(3)}`, inline: true }
-          );
+      if (cleanGlobal) {
+        // Global cleanup across all servers
+        const servers = await s3Service.listServers();
+        
+        // Get initial stats for comparison
+        let initialTotalStats = await s3Service.getTotalStats();
+        let initialTotalSize = initialTotalStats.totalSize;
+        
+        // Perform cleanup on each server
+        for (const serverId of servers) {
+          // Get guild name if available
+          const guild = interaction.client.guilds.cache.get(serverId);
+          const serverName = guild ? guild.name : serverId;
+          
+          // Cleanup this server
+          const serverCleanedFiles = await s3Service.cleanupFiles(serverId);
+          if (serverCleanedFiles.length > 0) {
+            totalCleanedFiles += serverCleanedFiles.length;
+            cleanedFilesList.push(`**${serverName}**: ${serverCleanedFiles.length} files`);
+            
+            // Log server-specific cleanup
+            console.log(`🧹 [CLEANUP] ${member.displayName} cleaned ${serverCleanedFiles.length} files from server ${serverId}`);
+          }
         }
+        
+        // Calculate space saved
+        const finalTotalStats = await s3Service.getTotalStats();
+        totalSpaceSaved = initialTotalSize - finalTotalStats.totalSize;
+        
+        // Log the global cleanup
+        console.log(`🧹 [GLOBAL CLEANUP] ${member.displayName} cleaned ${totalCleanedFiles} files across ${servers.length} servers, saved ${(totalSpaceSaved / 1024 / 1024).toFixed(2)}MB`);
+        
+        const embed = new EmbedBuilder()
+          .setTitle('🧹 Global Cloud Storage Cleanup Complete')
+          .setDescription(`Removed **${totalCleanedFiles}** corrupted or empty files across **${servers.length}** servers.`)
+          .addFields(
+            // Cleanup Results
+            totalCleanedFiles > 0 ? 
+              { name: '🗑️ Cleaned Servers', value: cleanedFilesList.join('\n') || 'None', inline: false } :
+              { name: '✅ Result', value: 'No cleanup needed - all files are healthy!', inline: false },
+            
+            // Statistics
+            { name: '📊 Servers Scanned', value: servers.length.toString(), inline: true },
+            { name: '📊 Files Cleaned', value: totalCleanedFiles.toString(), inline: true },
+            { name: '💾 Space Saved', value: `${(totalSpaceSaved / 1024 / 1024).toFixed(2)} MB`, inline: true },
+            
+            // Cloud Information
+            { name: '☁️ Storage Location', value: 'AWS S3 Cloud Storage', inline: true },
+            { name: '🌍 Region', value: process.env.AWS_REGION || 'Unknown', inline: true },
+            { name: '👤 Performed by', value: member.displayName, inline: true }
+          )
+          .setColor(totalCleanedFiles > 0 ? 0xff8800 : 0x00ff00)
+          .setTimestamp()
+          .setFooter({ text: 'RDP Datacenter • Global Cloud Cleanup Complete' });
+  
+        // Add cost savings estimate if space was saved
+        if (totalSpaceSaved > 0) {
+          const monthlySavings = calculateMonthlySavings(totalSpaceSaved / 1024 / 1024);
+          if (monthlySavings > 0.001) {
+            embed.addFields(
+              { name: '💰 Est. Monthly Savings', value: `${monthlySavings.toFixed(3)}`, inline: true }
+            );
+          }
+        }
+  
+        await interaction.editReply({ embeds: [embed] });
+        
+      } else {
+        // Server-specific cleanup
+        // Get initial bucket statistics
+        const initialStats = await s3Service.getBucketStats(guildId);
+        const initialSizeMB = (initialStats.totalSize / 1024 / 1024).toFixed(2);
+        
+        // Perform cleanup
+        const cleanedFiles = await s3Service.cleanupFiles(guildId);
+        
+        // Get updated statistics
+        const finalStats = await s3Service.getBucketStats(guildId);
+        const finalSizeMB = (finalStats.totalSize / 1024 / 1024).toFixed(2);
+        const spaceSavedMB = ((initialStats.totalSize - finalStats.totalSize) / 1024 / 1024).toFixed(2);
+        
+        // Log the cleanup
+        console.log(`🧹 [CLEANUP] ${member.displayName} cleaned ${cleanedFiles.length} files from server ${guildId}, saved ${spaceSavedMB}MB`);
+        
+        const embed = new EmbedBuilder()
+          .setTitle(`🧹 ${interaction.guild?.name || 'Server'}'s Sound Collection Cleanup`)
+          .setDescription(`Removed **${cleanedFiles.length}** corrupted or empty files from this server's sound collection.`)
+          .addFields(
+            // Cleanup Results
+            cleanedFiles.length > 0 ? 
+              { name: '🗑️ Deleted Files', value: cleanedFiles.slice(0, 10).join('\n') + (cleanedFiles.length > 10 ? `\n... and ${cleanedFiles.length - 10} more` : '') || 'None', inline: false } :
+              { name: '✅ Result', value: 'No cleanup needed - all files are healthy!', inline: false },
+            
+            // Statistics
+            { name: '📊 Before Cleanup', value: `${initialStats.fileCount} files\n${initialSizeMB} MB`, inline: true },
+            { name: '📊 After Cleanup', value: `${finalStats.fileCount} files\n${finalSizeMB} MB`, inline: true },
+            { name: '💾 Space Saved', value: `${spaceSavedMB} MB`, inline: true },
+            
+            // Cloud Information
+            { name: '☁️ Storage Location', value: `AWS S3 (${folderName}/${guildId}/)`, inline: true },
+            { name: '🌍 Region', value: process.env.AWS_REGION || 'Unknown', inline: true },
+            { name: '👤 Performed by', value: member.displayName, inline: true }
+          )
+          .setColor(cleanedFiles.length > 0 ? 0xff8800 : 0x00ff00)
+          .setTimestamp()
+          .setFooter({ text: `RDP Datacenter • ${interaction.guild?.name || 'Server'} Cleanup Complete` });
+  
+        // Add cost savings estimate if space was saved
+        if (parseFloat(spaceSavedMB) > 0) {
+          const monthlySavings = calculateMonthlySavings(parseFloat(spaceSavedMB));
+          if (monthlySavings > 0.001) {
+            embed.addFields(
+              { name: '💰 Est. Monthly Savings', value: `${monthlySavings.toFixed(3)}`, inline: true }
+            );
+          }
+        }
+  
+        await interaction.editReply({ embeds: [embed] });
       }
-
-      await interaction.editReply({ embeds: [embed] });
       
     } catch (error) {
-      console.error('❌ [ERROR] S3 Cleanup failed:', error);
+      console.error(`❌ [ERROR] S3 Cleanup failed for server ${guildId}:`, error);
       
       let errorMessage = '❌ Failed to perform cloud storage cleanup.';
       

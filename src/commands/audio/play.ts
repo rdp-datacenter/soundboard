@@ -64,7 +64,7 @@ async function playAudio(
   fileName: string, 
   context: CommandContext
 ): Promise<string | void> {
-  const { client, audioPlayer, s3Service, currentVolume, setConnection } = context;
+  const { client, audioPlayer, s3Service, currentVolume, setConnection, guildId, dbService } = context;
   
   // Get the user's voice channel
   let member: GuildMember;
@@ -87,11 +87,11 @@ async function playAudio(
     }
   }
 
-  // Check if file exists in S3
+  // Check if file exists in S3 for this server
   try {
-    const fileExists = await s3Service.fileExists(fileName);
+    const fileExists = await s3Service.fileExists(fileName, guildId);
     if (!fileExists) {
-      const errorMsg = `❌ File "${fileName}" not found in cloud storage! Use \`/list\` to see available files.`;
+      const errorMsg = `❌ File "${fileName}" not found in this server's sound collection! Use \`/list\` to see available files.`;
       if (source instanceof ChatInputCommandInteraction) {
         return errorMsg;
       } else {
@@ -100,7 +100,7 @@ async function playAudio(
       }
     }
   } catch (error) {
-    console.error('❌ [S3] Error checking file existence:', error);
+    console.error(`❌ [S3] Error checking file existence for server ${guildId}:`, error);
     const errorMsg = '❌ Unable to access cloud storage. Please try again.';
     if (source instanceof ChatInputCommandInteraction) {
       return errorMsg;
@@ -124,45 +124,61 @@ async function playAudio(
     // Wait for connection to be ready
     await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
 
+    // Get server's default volume if available
+    let playbackVolume = currentVolume; // Default to current volume
+    
+    // If in a guild, try to get the server's default volume
+    if (guildId !== 'global') {
+      try {
+        const settings = await dbService.getServerSettings(guildId);
+        // Only use default volume if this is a new playback (currentVolume is still at default)
+        // This way we don't override manual volume adjustments during a session
+        if (currentVolume === 0.5) { // 0.5 is the bot's startup default
+          playbackVolume = settings.defaultVolume;
+          // Also update the context's currentVolume for future playback
+          context.setVolume(settings.defaultVolume);
+          console.log(`🔊 [VOLUME] Using server ${guildId} default volume: ${Math.round(settings.defaultVolume * 100)}%`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ [DB] Could not get default volume for server ${guildId}:`, error);
+        // Continue with the current volume if there's an error
+      }
+    }
+
     // Get file stream from S3
     let audioResource;
     try {
       // Option 1: Stream directly from S3 (recommended for better performance)
-      const fileStream = await s3Service.getFileStream(fileName);
+      const fileStream = await s3Service.getFileStream(fileName, guildId);
       
       audioResource = createAudioResource(fileStream, {
         inlineVolume: true // Enable volume control
       });
       
-      console.log(`🎵 [PLAY] Streaming from S3: ${fileName}`);
+      console.log(`🎵 [PLAY] Server ${guildId} streaming: ${fileName}`);
     } catch (streamError) {
-      console.error('❌ [S3] Stream error, falling back to URL:', streamError);
-      
-      // Get the folder prefix to properly construct the URL
-      const folderPrefix = process.env.S3_FOLDER || 'audio';
-      const prefix = folderPrefix.endsWith('/') ? folderPrefix : `${folderPrefix}/`;
+      console.error(`❌ [S3] Stream error for server ${guildId}, falling back to URL:`, streamError);
       
       // Option 2: Fallback to public URL streaming
-      const sanitizedFileName = s3Service.sanitizeFileName(fileName);
-      const fileUrl = `${process.env.S3_BASE_URL}/${prefix}${sanitizedFileName}`;
+      const fileUrl = s3Service.getServerFileUrl(fileName, guildId);
       
       audioResource = createAudioResource(fileUrl, {
         inlineVolume: true
       });
       
-      console.log(`🎵 [PLAY] Streaming from URL: ${fileUrl}`);
+      console.log(`🎵 [PLAY] Server ${guildId} streaming from URL: ${fileUrl}`);
     }
     
-    // Set the volume (default 50% or current volume)
+    // Set the volume (server default or current volume)
     if (audioResource.volume) {
-      audioResource.volume.setVolume(currentVolume);
+      audioResource.volume.setVolume(playbackVolume);
     }
 
     audioPlayer.play(audioResource);
     connection.subscribe(audioPlayer);
 
     // Get volume emoji based on current volume
-    const volumePercent = Math.round(currentVolume * 100);
+    const volumePercent = Math.round(playbackVolume * 100);
     let volumeEmoji = '🔇';
     if (volumePercent > 66) volumeEmoji = '🔊';
     else if (volumePercent > 33) volumeEmoji = '🔉';
@@ -171,14 +187,17 @@ async function playAudio(
     // Get file info for display
     let fileSize = 'Unknown';
     try {
-      const fileInfo = await s3Service.getFileInfo(fileName);
+      const fileInfo = await s3Service.getFileInfo(fileName, guildId);
       if (fileInfo) {
         fileSize = `${(fileInfo.size / 1024 / 1024).toFixed(2)} MB`;
       }
     } catch (error) {
       // Don't fail if we can't get file info
-      console.warn('⚠️ [S3] Could not get file info:', error);
+      console.warn(`⚠️ [S3] Could not get file info for server ${guildId}:`, error);
     }
+
+    // Get the folder name for display
+    const folderName = process.env.S3_FOLDER || 'audio';
 
     const embed = new EmbedBuilder()
       .setTitle('🎵 Now Playing from Cloud')
@@ -187,7 +206,7 @@ async function playAudio(
         { name: '🏠 Voice Channel', value: voiceChannel.name, inline: true },
         { name: '👤 Requested by', value: member.displayName, inline: true },
         { name: `${volumeEmoji} Volume`, value: `${volumePercent}%`, inline: true },
-        { name: '☁️ Source', value: 'AWS S3 Cloud Storage', inline: true },
+        { name: '☁️ Source', value: `AWS S3 (${folderName}/${guildId}/)`, inline: true },
         { name: '📏 File Size', value: fileSize, inline: true },
         { name: '🌐 Streaming', value: 'Global CDN', inline: true }
       )
@@ -202,7 +221,7 @@ async function playAudio(
     }
 
   } catch (error) {
-    console.error('❌ [ERROR] Audio playback failed:', error);
+    console.error(`❌ [ERROR] Audio playback failed for server ${guildId}:`, error);
     
     let errorMsg = '❌ Failed to play audio.';
     
@@ -227,13 +246,13 @@ async function playAudio(
   }
 }
 
-// Updated to work with S3
-export async function getAvailableFiles(s3Service: S3Service): Promise<string[]> {
+// Updated to work with server-specific S3 folders
+export async function getAvailableFiles(s3Service: S3Service, guildId: string): Promise<string[]> {
   try {
-    const files = await s3Service.listFiles();
+    const files = await s3Service.listFiles(guildId);
     return files.map(file => file.name).sort();
   } catch (error) {
-    console.error('❌ [S3] Error getting available files:', error);
+    console.error(`❌ [S3] Error getting available files for server ${guildId}:`, error);
     return [];
   }
 }

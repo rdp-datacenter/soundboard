@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { DatabaseService } from '@/utils/db';
+import { S3Service } from '@/utils/s3';
 import {
   Client,
   GatewayIntentBits,
@@ -13,7 +15,6 @@ import {
 import fs from 'fs';
 import { CommandHandler } from '@/handlers/commandHandler';
 import { BotContext } from '@/types/Command';
-import { S3Service } from '@/utils/s3';
 
 // Bot configuration
 const TOKEN = process.env.DISCORD_TOKEN!;
@@ -30,9 +31,11 @@ function validateEnvironment(): void {
     'S3_BUCKET_NAME', 
     'S3_BASE_URL'
   ];
+  const requiredDbVars = ['NEON_DB_URL'];
   
   const missingDiscord = requiredDiscordVars.filter(key => !process.env[key]);
   const missingS3 = requiredS3Vars.filter(key => !process.env[key]);
+  const missingDb = requiredDbVars.filter(key => !process.env[key]);
   
   if (missingDiscord.length > 0) {
     console.error(`❌ Missing required Discord environment variables: ${missingDiscord.join(', ')}`);
@@ -45,16 +48,29 @@ function validateEnvironment(): void {
     process.exit(1);
   }
 
+  if (missingDb.length > 0) {
+    console.error(`❌ Missing required Database environment variables: ${missingDb.join(', ')}`);
+    console.error('💡 For database integration, ensure NEON_DB_URL is set in your .env file');
+    process.exit(1);
+  }
+
   // Validate and normalize audio folder configuration
   const s3Folder = process.env.S3_FOLDER || 'audio';
   console.log(`📁 Audio folder configuration: ${s3Folder}/`);
+  console.log(`📁 Server folder pattern: ${s3Folder}/{server_id}/`);
   
   // Ensure S3_FOLDER ends with '/' in environment for consistency
   if (process.env.S3_FOLDER && !process.env.S3_FOLDER.endsWith('/')) {
     process.env.S3_FOLDER = `${process.env.S3_FOLDER}/`;
     console.log(`📁 Normalized S3_FOLDER to: ${process.env.S3_FOLDER}`);
   }
+
+  // Log database connection (without sensitive details)
+  const dbUrl = process.env.NEON_DB_URL || '';
+  const sanitizedDbUrl = dbUrl.replace(/\/\/.*@/, '//***:***@');
+  console.log(`🗄️ Database connection: ${sanitizedDbUrl}`);
 }
+
 
 // Ensure local audio folder exists (for backward compatibility)
 if (!fs.existsSync(AUDIO_FOLDER)) {
@@ -69,6 +85,7 @@ class CloudSoundboardBot {
   private currentVolume: number = 0.5; // Default 50% volume
   private commandHandler: CommandHandler;
   private s3Service: S3Service;
+  private dbService: DatabaseService; // Add database service
 
   constructor() {
     // Validate environment before initialization
@@ -87,8 +104,11 @@ class CloudSoundboardBot {
     try {
       this.s3Service = new S3Service();
       console.log('☁️ S3 Service initialized successfully');
+      
+      this.dbService = new DatabaseService();
+      console.log('🗄️ Database Service initialized successfully');
     } catch (error) {
-      console.error('❌ Failed to initialize S3 Service:', error);
+      console.error('❌ Failed to initialize services:', error);
       process.exit(1);
     }
 
@@ -107,12 +127,23 @@ class CloudSoundboardBot {
         if (s3Connected) {
           console.log('☁️ S3 connection successful');
           
-          // Get initial bucket stats
-          const stats = await this.s3Service.getBucketStats();
+          // Get global statistics across all servers
+          const totalStats = await this.s3Service.getTotalStats();
           const folderName = process.env.S3_FOLDER || 'audio';
-          console.log(`📊 S3 Stats: ${stats.fileCount} files in ${folderName}/ folder, ${(stats.totalSize / 1024 / 1024).toFixed(2)}MB`);
           
-          this.client.user?.setActivity(`🎵 ${stats.fileCount} sounds in ${folderName}/`, { type: ActivityType.Listening });
+          console.log(`📊 S3 Stats: ${totalStats.serverCount} servers, ${totalStats.fileCount} total files, ${(totalStats.totalSize / 1024 / 1024).toFixed(2)}MB`);
+          
+          // List all servers to display in the logs
+          const servers = await this.s3Service.listServers();
+          if (servers.length > 0) {
+            console.log(`🏠 Servers with sound collections: ${servers.length}`);
+            
+            // Update activity to show total files across all servers
+            this.client.user?.setActivity(`🎵 ${totalStats.fileCount} sounds across ${totalStats.serverCount} servers`, { type: ActivityType.Listening });
+          } else {
+            console.log('📂 No servers with sound collections found yet');
+            this.client.user?.setActivity(`🎵 Ready for sounds`, { type: ActivityType.Listening });
+          }
         } else {
           console.warn('⚠️ S3 connection failed - some features may not work');
           this.client.user?.setActivity('🎵 Cloud sounds (offline)', { type: ActivityType.Listening });
@@ -131,12 +162,14 @@ class CloudSoundboardBot {
       
       // Get the folder name for display
       const folderName = process.env.S3_FOLDER || 'audio';
-      console.log(`🚀 RDP Soundboard is ready with cloud storage in ${folderName}/ folder!`);
+      console.log(`🚀 RDP Soundboard is ready with cloud storage in ${folderName}/{server_id}/ folders!`);
     });
 
     // Handle all interactions
     this.client.on('interactionCreate', async (interaction: Interaction) => {
-      const context = this.getContext();
+      // Extract guild ID or use 'global' if not in a guild
+      const guildId = interaction.guildId || 'global';
+      const context = this.getContext(guildId);
       
       try {
         if (interaction.isChatInputCommand()) {
@@ -145,7 +178,7 @@ class CloudSoundboardBot {
           await this.commandHandler.handleAutocomplete(interaction, context);
         }
       } catch (error) {
-        console.error('❌ Error handling interaction:', error);
+        console.error(`❌ Error handling interaction in server ${guildId}:`, error);
         
         // Try to respond with an error if the interaction hasn't been replied to
         if (interaction.isChatInputCommand() && !interaction.replied && !interaction.deferred) {
@@ -165,11 +198,14 @@ class CloudSoundboardBot {
     this.client.on('messageCreate', async (message) => {
       if (message.author.bot) return;
       
+      // Extract guild ID or use 'global' if not in a guild
+      const guildId = message.guildId || 'global';
+      
       try {
-        const context = this.getContext();
+        const context = this.getContext(guildId);
         await this.commandHandler.handleTextCommand(message, context);
       } catch (error) {
-        console.error('❌ Error handling message:', error);
+        console.error(`❌ Error handling message in server ${guildId}:`, error);
       }
     });
 
@@ -204,14 +240,17 @@ class CloudSoundboardBot {
     });
   }
 
-  private getContext(): BotContext {
+  // Update getContext to include the database service
+  private getContext(guildId?: string): BotContext {
     return {
       client: this.client,
       audioPlayer: this.audioPlayer,
       currentConnection: this.currentConnection,
       audioFolder: AUDIO_FOLDER, // Keep for backward compatibility
       currentVolume: this.currentVolume,
-      s3Service: this.s3Service, // Add S3 service to context
+      s3Service: this.s3Service,
+      dbService: this.dbService, // Add database service to context
+      guildId: guildId || 'global',
       setConnection: (connection: any) => {
         this.currentConnection = connection;
       },
@@ -230,6 +269,7 @@ class CloudSoundboardBot {
     };
   }
 
+  // Update cleanup to close the database connection
   private cleanup(): void {
     try {
       // Stop audio playback
@@ -242,6 +282,11 @@ class CloudSoundboardBot {
         this.currentConnection.destroy();
       }
       
+      // Close database connection
+      this.dbService.close().catch(err => {
+        console.error('❌ Error closing database connection:', err);
+      });
+      
       // Destroy Discord client
       this.client.destroy();
       
@@ -253,18 +298,27 @@ class CloudSoundboardBot {
     }
   }
 
-  public start(): void {
-    this.client.login(TOKEN).catch(error => {
-      console.error('❌ Failed to login:', error);
+  // Add the missing start method
+  public async start(): Promise<void> {
+    try {
+      console.log('🔐 Logging into Discord...');
+      await this.client.login(TOKEN);
+    } catch (error) {
+      console.error('❌ Failed to start bot:', error);
       process.exit(1);
-    });
+    }
   }
 }
 
 // Start the bot
 const folderName = process.env.S3_FOLDER || 'audio';
-console.log(`🚀 Starting RDP Soundboard with Cloud Storage (${folderName}/ folder)...`);
+console.log(`🚀 Starting RDP Soundboard with Multi-Tenant Cloud Storage (${folderName}/{server_id}/)...`);
 const bot = new CloudSoundboardBot();
-bot.start();
+
+// Handle async start
+bot.start().catch(error => {
+  console.error('❌ Failed to start bot:', error);
+  process.exit(1);
+});
 
 export default CloudSoundboardBot;
