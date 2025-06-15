@@ -2,7 +2,9 @@ import 'dotenv/config';
 import {
   Client,
   GatewayIntentBits,
-  ActivityType
+  ActivityType,
+  Interaction,
+  MessageFlags
 } from 'discord.js';
 import {
   createAudioPlayer,
@@ -17,9 +19,21 @@ const TOKEN = process.env.DISCORD_TOKEN!;
 const CLIENT_ID = process.env.CLIENT_ID!;
 const AUDIO_FOLDER = './audio'; // Folder to store MP3 files
 
+// Validate required environment variables
+if (!TOKEN) {
+  console.error('❌ DISCORD_TOKEN is required in .env file');
+  process.exit(1);
+}
+
+if (!CLIENT_ID) {
+  console.error('❌ CLIENT_ID is required in .env file');
+  process.exit(1);
+}
+
 // Ensure audio folder exists
 if (!fs.existsSync(AUDIO_FOLDER)) {
   fs.mkdirSync(AUDIO_FOLDER, { recursive: true });
+  console.log('📁 Created audio folder:', AUDIO_FOLDER);
 }
 
 class MusicBot {
@@ -43,7 +57,7 @@ class MusicBot {
     this.setupEventHandlers();
   }
 
-  private setupEventHandlers() {
+  private setupEventHandlers(): void {
     this.client.once('ready', () => {
       console.log(`🎵 ${this.client.user?.tag} is online!`);
       console.log(`🔊 Default volume set to ${Math.round(this.currentVolume * 100)}%`);
@@ -57,14 +71,30 @@ class MusicBot {
       console.log(`📋 Available commands:`, commands);
     });
 
-    // Handle slash commands
-    this.client.on('interactionCreate', async (interaction) => {
+    // Handle all interactions
+    this.client.on('interactionCreate', async (interaction: Interaction) => {
       const context = this.getContext();
       
-      if (interaction.isChatInputCommand()) {
-        await this.commandHandler.handleSlashCommand(interaction, context);
-      } else if (interaction.isAutocomplete()) {
-        await this.commandHandler.handleAutocomplete(interaction, context);
+      try {
+        if (interaction.isChatInputCommand()) {
+          await this.commandHandler.handleSlashCommand(interaction, context);
+        } else if (interaction.isAutocomplete()) {
+          await this.commandHandler.handleAutocomplete(interaction, context);
+        }
+      } catch (error) {
+        console.error('❌ Error handling interaction:', error);
+        
+        // Try to respond with an error if the interaction hasn't been replied to
+        if (interaction.isChatInputCommand() && !interaction.replied && !interaction.deferred) {
+          try {
+            await interaction.reply({
+              content: '❌ An error occurred while processing your command.',
+              flags: MessageFlags.Ephemeral
+            });
+          } catch (replyError) {
+            console.error('❌ Failed to send error response:', replyError);
+          }
+        }
       }
     });
 
@@ -72,8 +102,12 @@ class MusicBot {
     this.client.on('messageCreate', async (message) => {
       if (message.author.bot) return;
       
-      const context = this.getContext();
-      await this.commandHandler.handleTextCommand(message, context);
+      try {
+        const context = this.getContext();
+        await this.commandHandler.handleTextCommand(message, context);
+      } catch (error) {
+        console.error('❌ Error handling message:', error);
+      }
     });
 
     // Audio player event handlers
@@ -83,6 +117,19 @@ class MusicBot {
 
     this.audioPlayer.on('error', (error) => {
       console.error('❌ Audio player error:', error);
+    });
+
+    // Handle process termination gracefully
+    process.on('SIGINT', () => {
+      console.log('\n🛑 Shutting down bot...');
+      this.client.destroy();
+      process.exit(0);
+    });
+
+    process.on('SIGTERM', () => {
+      console.log('\n🛑 Shutting down bot...');
+      this.client.destroy();
+      process.exit(0);
     });
   }
 
@@ -111,8 +158,11 @@ class MusicBot {
     };
   }
 
-  public start() {
-    this.client.login(TOKEN);
+  public start(): void {
+    this.client.login(TOKEN).catch(error => {
+      console.error('❌ Failed to login:', error);
+      process.exit(1);
+    });
   }
 }
 

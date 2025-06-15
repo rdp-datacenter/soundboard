@@ -46,7 +46,6 @@ lib/
 # ========================
 # Audio Files (Memes)
 # ========================
-audio/
 sounds/
 memes/
 *.mp3

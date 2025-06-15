@@ -16,7 +16,7 @@
         "mp3",
         "typescript"
     ],
-    "author": "Your Name",
+    "author": "RDP Datacenter",
     "license": "MIT",
     "dependencies": {
         "@discordjs/voice": "^0.18.0",
