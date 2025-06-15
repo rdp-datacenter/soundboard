@@ -5,13 +5,13 @@ services:
     restart: unless-stopped
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
-      - CLIENT_ID={CLIENT_ID}
-      - AWS_ACCESS_KEY_ID={AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY={AWS_SECRET_ACCESS_KEY}
-      - AWS_REGION={AWS_REGION}
-      - S3_BUCKET_NAME={S3_BUCKET_NAME}
-      - S3_BASE_URL={S3_BASE_URL}
-      - S3_FOLDER={S3_FOLDER}
+      - CLIENT_ID=${CLIENT_ID}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - S3_BASE_URL=${S3_BASE_URL}
+      - S3_FOLDER=${S3_FOLDER}
       - NODE_ENV=production
     networks:
       - bot-network
