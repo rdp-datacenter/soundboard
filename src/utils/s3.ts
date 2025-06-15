@@ -22,7 +22,7 @@ export class S3Service {
   private s3Client: S3Client;
   private bucketName: string;
   private baseUrl: string;
-  private folderPrefix: string;
+  private baseFolderPrefix: string;
 
   constructor() {
     // Initialize S3 client
@@ -37,10 +37,10 @@ export class S3Service {
     this.bucketName = process.env.S3_BUCKET_NAME!;
     this.baseUrl = process.env.S3_BASE_URL!;
     
-    // Set the folder prefix (ensure it ends with /)
-    this.folderPrefix = process.env.S3_FOLDER || 'audio';
-    if (!this.folderPrefix.endsWith('/')) {
-      this.folderPrefix += '/';
+    // Set the base folder prefix (ensure it ends with /)
+    this.baseFolderPrefix = process.env.S3_FOLDER || 'audio';
+    if (!this.baseFolderPrefix.endsWith('/')) {
+      this.baseFolderPrefix += '/';
     }
 
     // Validate required environment variables
@@ -62,20 +62,31 @@ export class S3Service {
       throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
     }
     
-    console.log(`🗂️ [S3] Using folder prefix: ${this.folderPrefix}`);
+    console.log(`🗂️ [S3] Using base folder prefix: ${this.baseFolderPrefix}`);
   }
 
   /**
-   * Upload a file to S3
+   * Get server-specific folder prefix
+   * @param serverId Discord server (guild) ID
+   * @returns Full folder path for the server
+   */
+  private getServerFolderPrefix(serverId: string): string {
+    return `${this.baseFolderPrefix}${serverId}/`;
+  }
+
+  /**
+   * Upload a file to S3 in server-specific folder
    */
   async uploadFile(
     fileName: string, 
     fileBuffer: Buffer, 
-    contentType: string = 'audio/mpeg'
+    contentType: string = 'audio/mpeg',
+    serverId: string
   ): Promise<string> {
     try {
       const sanitizedName = this.sanitizeFileName(fileName);
-      const key = `${this.folderPrefix}${sanitizedName}`;
+      const folderPrefix = this.getServerFolderPrefix(serverId);
+      const key = `${folderPrefix}${sanitizedName}`;
       
       const upload = new Upload({
         client: this.s3Client,
@@ -88,13 +99,14 @@ export class S3Service {
           Metadata: {
             'uploaded-by': 'rdp-soundboard',
             'upload-date': new Date().toISOString(),
+            'server-id': serverId,
           },
         },
       });
 
       await upload.done();
       
-      console.log(`✅ [S3] Uploaded: ${key}`);
+      console.log(`✅ [S3] Uploaded to server ${serverId}: ${key}`);
       return this.getPublicUrl(key);
       
     } catch (error) {
@@ -104,12 +116,13 @@ export class S3Service {
   }
 
   /**
-   * Delete a file from S3
+   * Delete a file from S3 from server-specific folder
    */
-  async deleteFile(fileName: string): Promise<void> {
+  async deleteFile(fileName: string, serverId: string): Promise<void> {
     try {
       const sanitizedName = this.sanitizeFileName(fileName);
-      const key = `${this.folderPrefix}${sanitizedName}`;
+      const folderPrefix = this.getServerFolderPrefix(serverId);
+      const key = `${folderPrefix}${sanitizedName}`;
       
       const command = new DeleteObjectCommand({
         Bucket: this.bucketName,
@@ -117,7 +130,7 @@ export class S3Service {
       });
 
       await this.s3Client.send(command);
-      console.log(`🗑️ [S3] Deleted: ${key}`);
+      console.log(`🗑️ [S3] Deleted from server ${serverId}: ${key}`);
       
     } catch (error) {
       console.error('❌ [S3] Delete failed:', error);
@@ -126,13 +139,14 @@ export class S3Service {
   }
 
   /**
-   * List all MP3 files in the bucket
+   * List all MP3 files for a specific server
    */
-  async listFiles(): Promise<AudioFile[]> {
+  async listFiles(serverId: string): Promise<AudioFile[]> {
     try {
+      const folderPrefix = this.getServerFolderPrefix(serverId);
       const command = new ListObjectsV2Command({
         Bucket: this.bucketName,
-        Prefix: this.folderPrefix, // Use folder prefix
+        Prefix: folderPrefix, // Use server-specific folder prefix
         MaxKeys: 1000, // Adjust as needed
       });
 
@@ -148,7 +162,7 @@ export class S3Service {
         .map(object => ({
           key: object.Key!,
           // Extract just the filename without the folder prefix
-          name: object.Key!.replace(this.folderPrefix, ''),
+          name: object.Key!.replace(folderPrefix, ''),
           size: object.Size || 0,
           lastModified: object.LastModified || new Date(),
           url: this.getPublicUrl(object.Key!),
@@ -158,18 +172,19 @@ export class S3Service {
       return audioFiles;
       
     } catch (error) {
-      console.error('❌ [S3] List files failed:', error);
+      console.error(`❌ [S3] List files failed for server ${serverId}:`, error);
       throw new Error(`Failed to list files: ${error}`);
     }
   }
 
   /**
-   * Check if a file exists in S3
+   * Check if a file exists in S3 for a specific server
    */
-  async fileExists(fileName: string): Promise<boolean> {
+  async fileExists(fileName: string, serverId: string): Promise<boolean> {
     try {
       const sanitizedName = this.sanitizeFileName(fileName);
-      const key = `${this.folderPrefix}${sanitizedName}`;
+      const folderPrefix = this.getServerFolderPrefix(serverId);
+      const key = `${folderPrefix}${sanitizedName}`;
       
       const command = new HeadObjectCommand({
         Bucket: this.bucketName,
@@ -190,10 +205,11 @@ export class S3Service {
   /**
    * Get a readable stream for a file (for Discord voice)
    */
-  async getFileStream(fileName: string): Promise<Readable> {
+  async getFileStream(fileName: string, serverId: string): Promise<Readable> {
     try {
       const sanitizedName = this.sanitizeFileName(fileName);
-      const key = `${this.folderPrefix}${sanitizedName}`;
+      const folderPrefix = this.getServerFolderPrefix(serverId);
+      const key = `${folderPrefix}${sanitizedName}`;
       
       const command = new GetObjectCommand({
         Bucket: this.bucketName,
@@ -209,7 +225,7 @@ export class S3Service {
       return response.Body as Readable;
       
     } catch (error) {
-      console.error('❌ [S3] Get file stream failed:', error);
+      console.error(`❌ [S3] Get file stream failed for server ${serverId}:`, error);
       throw new Error(`Failed to get file stream: ${error}`);
     }
   }
@@ -222,12 +238,23 @@ export class S3Service {
   }
 
   /**
-   * Get file information
+   * Get server-specific public URL for a file
    */
-  async getFileInfo(fileName: string): Promise<{ size: number; lastModified: Date } | null> {
+  getServerFileUrl(fileName: string, serverId: string): string {
+    const sanitizedName = this.sanitizeFileName(fileName);
+    const folderPrefix = this.getServerFolderPrefix(serverId);
+    const key = `${folderPrefix}${sanitizedName}`;
+    return this.getPublicUrl(key);
+  }
+
+  /**
+   * Get file information for a specific server
+   */
+  async getFileInfo(fileName: string, serverId: string): Promise<{ size: number; lastModified: Date } | null> {
     try {
       const sanitizedName = this.sanitizeFileName(fileName);
-      const key = `${this.folderPrefix}${sanitizedName}`;
+      const folderPrefix = this.getServerFolderPrefix(serverId);
+      const key = `${folderPrefix}${sanitizedName}`;
       
       const command = new HeadObjectCommand({
         Bucket: this.bucketName,
@@ -250,67 +277,11 @@ export class S3Service {
   }
 
   /**
- * Rename a file in S3 (copy and delete operation)
- * Note: S3 doesn't have a native rename operation, so we implement it as copy + delete
- */
-async renameFile(
-  currentFileName: string, 
-  newFileName: string
-): Promise<string> {
-  try {
-    // 1. Make sure files are sanitized
-    const currentKey = this.sanitizeFileName(currentFileName);
-    const newKey = this.sanitizeFileName(newFileName);
-    
-    // 2. Prepare the full S3 keys with folder prefix
-    const sourceKey = `${this.folderPrefix}${currentKey}`;
-    const destinationKey = `${this.folderPrefix}${newKey}`;
-    
-    // 3. Set up the copy command (copying from same bucket)
-    const copyParams = {
-      Bucket: this.bucketName,
-      CopySource: `${this.bucketName}/${sourceKey}`,
-      Key: destinationKey,
-      ContentType: 'audio/mpeg',
-      CacheControl: 'max-age=31536000', // 1 year cache
-      MetadataDirective: 'COPY', // Copy the metadata from the source
-    };
-    
-    // 4. Execute the copy operation
-    const copyCommand = {
-      Bucket: copyParams.Bucket,
-      CopySource: copyParams.CopySource,
-      Key: copyParams.Key,
-      ContentType: copyParams.ContentType,
-      CacheControl: copyParams.CacheControl,
-      MetadataDirective: copyParams.MetadataDirective as 'COPY' | 'REPLACE',
-    };
-    
-    await this.s3Client.send(new CopyObjectCommand(copyCommand));
-    
-    // 5. Delete the original file
-    const deleteCommand = new DeleteObjectCommand({
-      Bucket: this.bucketName,
-      Key: sourceKey,
-    });
-    
-    await this.s3Client.send(deleteCommand);
-    
-    console.log(`✅ [S3] Renamed: ${sourceKey} → ${destinationKey}`);
-    return this.getPublicUrl(destinationKey);
-    
-  } catch (error) {
-    console.error('❌ [S3] Rename failed:', error);
-    throw new Error(`Failed to rename file: ${error}`);
-  }
-}
-
-  /**
-   * Get bucket statistics
+   * Get bucket statistics for a specific server
    */
-  async getBucketStats(): Promise<{ fileCount: number; totalSize: number }> {
+  async getBucketStats(serverId: string): Promise<{ fileCount: number; totalSize: number }> {
     try {
-      const files = await this.listFiles();
+      const files = await this.listFiles(serverId);
       
       return {
         fileCount: files.length,
@@ -318,23 +289,23 @@ async renameFile(
       };
       
     } catch (error) {
-      console.error('❌ [S3] Get bucket stats failed:', error);
+      console.error(`❌ [S3] Get bucket stats failed for server ${serverId}:`, error);
       return { fileCount: 0, totalSize: 0 };
     }
   }
 
   /**
-   * Clean up corrupted or empty files
+   * Clean up corrupted or empty files for a specific server
    */
-  async cleanupFiles(): Promise<string[]> {
+  async cleanupFiles(serverId: string): Promise<string[]> {
     try {
-      const files = await this.listFiles();
+      const files = await this.listFiles(serverId);
       const cleanedFiles: string[] = [];
       
       // Remove files smaller than 1KB (likely corrupted)
       for (const file of files) {
         if (file.size < 1024) {
-          await this.deleteFile(file.name);
+          await this.deleteFile(file.name, serverId);
           cleanedFiles.push(file.name);
         }
       }
@@ -342,8 +313,66 @@ async renameFile(
       return cleanedFiles;
       
     } catch (error) {
-      console.error('❌ [S3] Cleanup failed:', error);
+      console.error(`❌ [S3] Cleanup failed for server ${serverId}:`, error);
       throw new Error(`Failed to cleanup files: ${error}`);
+    }
+  }
+
+  /**
+   * Rename a file in S3 for a specific server (copy and delete operation)
+   * Note: S3 doesn't have a native rename operation, so we implement it as copy + delete
+   */
+  async renameFile(
+    currentFileName: string, 
+    newFileName: string,
+    serverId: string
+  ): Promise<string> {
+    try {
+      // 1. Make sure files are sanitized
+      const currentKey = this.sanitizeFileName(currentFileName);
+      const newKey = this.sanitizeFileName(newFileName);
+      
+      // 2. Prepare the full S3 keys with folder prefix
+      const folderPrefix = this.getServerFolderPrefix(serverId);
+      const sourceKey = `${folderPrefix}${currentKey}`;
+      const destinationKey = `${folderPrefix}${newKey}`;
+      
+      // 3. Set up the copy command (copying from same bucket)
+      const copyParams = {
+        Bucket: this.bucketName,
+        CopySource: `${this.bucketName}/${sourceKey}`,
+        Key: destinationKey,
+        ContentType: 'audio/mpeg',
+        CacheControl: 'max-age=31536000', // 1 year cache
+        MetadataDirective: 'COPY', // Copy the metadata from the source
+      };
+      
+      // 4. Execute the copy operation
+      const copyCommand = {
+        Bucket: copyParams.Bucket,
+        CopySource: copyParams.CopySource,
+        Key: copyParams.Key,
+        ContentType: copyParams.ContentType,
+        CacheControl: copyParams.CacheControl,
+        MetadataDirective: copyParams.MetadataDirective as 'COPY' | 'REPLACE',
+      };
+      
+      await this.s3Client.send(new CopyObjectCommand(copyCommand));
+      
+      // 5. Delete the original file
+      const deleteCommand = new DeleteObjectCommand({
+        Bucket: this.bucketName,
+        Key: sourceKey,
+      });
+      
+      await this.s3Client.send(deleteCommand);
+      
+      console.log(`✅ [S3] Renamed for server ${serverId}: ${sourceKey} → ${destinationKey}`);
+      return this.getPublicUrl(destinationKey);
+      
+    } catch (error) {
+      console.error(`❌ [S3] Rename failed for server ${serverId}:`, error);
+      throw new Error(`Failed to rename file: ${error}`);
     }
   }
 
@@ -373,6 +402,71 @@ async renameFile(
     } catch (error) {
       console.error('❌ [S3] Connection test failed:', error);
       return false;
+    }
+  }
+
+  /**
+   * List all server IDs with files in the bucket
+   */
+  async listServers(): Promise<string[]> {
+    try {
+      // List all objects with the base prefix to find server folders
+      const command = new ListObjectsV2Command({
+        Bucket: this.bucketName,
+        Prefix: this.baseFolderPrefix,
+        Delimiter: '/', // Use delimiter to get common prefixes (folders)
+      });
+
+      const response = await this.s3Client.send(command);
+      
+      // Extract server IDs from common prefixes
+      const serverIds: string[] = [];
+      
+      if (response.CommonPrefixes) {
+        for (const prefix of response.CommonPrefixes) {
+          if (prefix.Prefix) {
+            // Extract server ID from the prefix
+            // Format: audio/123456789/ -> 123456789
+            const serverId = prefix.Prefix.replace(this.baseFolderPrefix, '').replace('/', '');
+            if (serverId) {
+              serverIds.push(serverId);
+            }
+          }
+        }
+      }
+      
+      return serverIds;
+      
+    } catch (error) {
+      console.error('❌ [S3] List servers failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get total statistics across all servers
+   */
+  async getTotalStats(): Promise<{ serverCount: number; fileCount: number; totalSize: number }> {
+    try {
+      const servers = await this.listServers();
+      let totalFiles = 0;
+      let totalSize = 0;
+      
+      for (const serverId of servers) {
+        const stats = await this.getBucketStats(serverId);
+        totalFiles += stats.fileCount;
+        totalSize += stats.totalSize;
+      }
+      
+      return {
+        serverCount: servers.length,
+        fileCount: totalFiles,
+        totalSize: totalSize,
+      };
+      
+    } catch (error) {
+      console.error('❌ [S3] Get total stats failed:', error);
+      return { serverCount: 0, fileCount: 0, totalSize: 0 };
     }
   }
 }

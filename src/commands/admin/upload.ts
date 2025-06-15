@@ -12,7 +12,7 @@ import { PermissionChecker } from '@/utils/permissions';
 export const uploadCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('upload')
-    .setDescription('Upload an MP3 file to the bot (Admin only)')
+    .setDescription('Upload an MP3 file to the server sound collection (Admin only)')
     .addAttachmentOption(option =>
       option.setName('file')
         .setDescription('MP3 file to upload')
@@ -21,7 +21,7 @@ export const uploadCommand: Command = {
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction: ChatInputCommandInteraction, context: CommandContext) {
-    const { s3Service } = context;
+    const { s3Service, guildId } = context;
     
     // Double-check admin permissions (extra security)
     const member = interaction.member as GuildMember;
@@ -51,18 +51,18 @@ export const uploadCommand: Command = {
       return;
     }
 
-    // Check for existing file in S3
+    // Check for existing file in S3 for this server
     try {
-      const fileExists = await s3Service.fileExists(attachment.name);
+      const fileExists = await s3Service.fileExists(attachment.name, guildId);
       if (fileExists) {
         await interaction.reply({
-          content: `❌ File **${attachment.name}** already exists in cloud storage! Please rename or delete the existing file first.`,
+          content: `❌ File **${attachment.name}** already exists in this server's collection! Please rename or delete the existing file first.`,
           flags: MessageFlags.Ephemeral
         });
         return;
       }
     } catch (error) {
-      console.error('❌ [S3] Error checking file existence:', error);
+      console.error(`❌ [S3] Error checking file existence for server ${guildId}:`, error);
       await interaction.reply({
         content: '❌ Unable to check file existence. Please try again.',
         flags: MessageFlags.Ephemeral
@@ -81,47 +81,48 @@ export const uploadCommand: Command = {
       
       const buffer = Buffer.from(await response.arrayBuffer());
       
-      // Upload to S3
+      // Upload to S3 in the server-specific folder
       const fileUrl = await s3Service.uploadFile(
         attachment.name, 
         buffer, 
-        'audio/mpeg'
+        'audio/mpeg',
+        guildId
       );
       
       // Get the folder name for display
       const folderName = process.env.S3_FOLDER || 'audio';
       
       // Log the upload for audit purposes
-      console.log(`📁 [UPLOAD] ${member.displayName} (${member.id}) uploaded to S3 ${folderName}/ folder: ${attachment.name}`);
+      console.log(`📁 [UPLOAD] ${member.displayName} (${member.id}) uploaded to server ${guildId}: ${attachment.name}`);
       
       const embed = new EmbedBuilder()
         .setTitle('✅ Audio File Uploaded Successfully!')
-        .setDescription(`**${attachment.name}** has been uploaded to RDP Soundboard cloud storage.`)
+        .setDescription(`**${attachment.name}** has been uploaded to this server's sound collection.`)
         .addFields(
           { name: '📁 File Name', value: attachment.name, inline: true },
           { name: '📏 File Size', value: `${(attachment.size / 1024 / 1024).toFixed(2)} MB`, inline: true },
           { name: '👤 Uploaded by', value: member.displayName, inline: true },
-          { name: '☁️ Storage', value: `AWS S3 (${folderName}/ folder)`, inline: true },
-          { name: '🌐 Access', value: 'Available globally', inline: true },
+          { name: '☁️ Storage', value: `AWS S3 (${folderName}/${guildId}/)`, inline: true },
+          { name: '🌐 Access', value: 'Available in this server only', inline: true },
           { name: '🎵 How to Play', value: `Use \`/play ${attachment.name}\` or \`@RDP Soundboard ${attachment.name}\``, inline: false }
         )
         .setColor(0x00AE86)
         .setTimestamp()
-        .setFooter({ text: 'RDP Datacenter • Cloud Upload' });
+        .setFooter({ text: `RDP Datacenter • ${interaction.guild?.name || 'Server'} Sound Collection` });
 
       await interaction.editReply({ embeds: [embed] });
 
       // Optional: Get updated file count for logging
       try {
-        const stats = await s3Service.getBucketStats();
-        console.log(`📊 [S3] Total files: ${stats.fileCount}, Total size: ${(stats.totalSize / 1024 / 1024).toFixed(2)}MB`);
+        const stats = await s3Service.getBucketStats(guildId);
+        console.log(`📊 [S3] Server ${guildId} stats - Total files: ${stats.fileCount}, Total size: ${(stats.totalSize / 1024 / 1024).toFixed(2)}MB`);
       } catch (error) {
         // Don't fail the command if stats fail
-        console.error('⚠️ [S3] Failed to get bucket stats:', error);
+        console.error(`⚠️ [S3] Failed to get bucket stats for server ${guildId}:`, error);
       }
       
     } catch (error) {
-      console.error('❌ [ERROR] S3 Upload failed:', error);
+      console.error(`❌ [ERROR] S3 Upload failed for server ${guildId}:`, error);
       
       let errorMessage = '❌ Failed to upload file to cloud storage.';
       

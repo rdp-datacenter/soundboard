@@ -8,6 +8,7 @@ import {
 } from 'discord.js';
 import { AudioPlayer } from '@discordjs/voice';
 import { S3Service } from '@/utils/s3';
+import { DatabaseService } from '@/utils/db';
 
 export interface CommandContext {
   client: Client;
@@ -18,6 +19,8 @@ export interface CommandContext {
   setVolume: (volume: number) => void;
   setConnection: (connection: any) => void;
   s3Service: S3Service;
+  guildId: string; // Server/guild ID
+  dbService: DatabaseService; // Add database service
 }
 
 export interface Command {
@@ -32,5 +35,4 @@ export interface TextCommand {
   execute: (message: Message, args: string[], context: CommandContext) => Promise<void>;
 }
 
-export interface BotContext extends CommandContext {
-}
+export interface BotContext extends CommandContext {}
