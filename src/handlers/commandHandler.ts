@@ -1,3 +1,4 @@
+// src/handlers/commandHandler.ts
 import { 
   Collection, 
   ChatInputCommandInteraction, 
@@ -10,6 +11,7 @@ import {
 import { Command, TextCommand, BotContext } from '@/types/Command';
 import fs from 'fs';
 import path from 'path';
+import { AudioFile } from '@/utils/s3';
 
 interface CommandModule {
   [key: string]: any;
@@ -113,7 +115,7 @@ export class CommandHandler {
     } catch (error) {
       console.error('Error executing slash command:', error);
       
-      const errorMessage = 'There was an error while executing this command!';
+      const errorMessage = '❌ There was an error while executing this command!';
       
       if (interaction.replied || interaction.deferred) {
         await interaction.editReply({ content: errorMessage });
@@ -138,11 +140,11 @@ export class CommandHandler {
         if (typeof handleMention === 'function') {
           await handleMention(message, fileName, context);
         } else {
-          await message.reply('Please specify an MP3 file name! Example: `@bot filename.mp3`');
+          await message.reply('Please specify an MP3 file name! Example: `@RDP Soundboard filename.mp3`');
         }
       } catch (error) {
         console.error('No mention handler found:', error);
-        await message.reply('Please specify an MP3 file name! Example: `@bot filename.mp3`');
+        await message.reply('Please specify an MP3 file name! Example: `@RDP Soundboard filename.mp3`');
       }
       return;
     }
@@ -163,18 +165,18 @@ export class CommandHandler {
       await command.execute(message, args, context);
     } catch (error) {
       console.error('Error executing text command:', error);
-      await message.reply('There was an error while executing this command!');
+      await message.reply('❌ There was an error while executing this command!');
     }
   }
 
   async handleAutocomplete(interaction: AutocompleteInteraction, context: BotContext): Promise<void> {
     try {
-      // Handle play command autocomplete
+      // Handle play command autocomplete with S3
       if (interaction.commandName === 'play') {
-        const { getAvailableFiles } = await import('../commands/audio/play');
-        if (typeof getAvailableFiles === 'function') {
-          const focusedValue = interaction.options.getFocused();
-          const files = getAvailableFiles(context.audioFolder);
+        const focusedValue = interaction.options.getFocused();
+        
+        try {
+          const files = await this.getAvailableFilesFromS3(context);
           const filtered = files.filter(file => 
             file.toLowerCase().includes(focusedValue.toLowerCase())
           ).slice(0, 25);
@@ -182,16 +184,19 @@ export class CommandHandler {
           await interaction.respond(
             filtered.map(file => ({ name: file, value: file }))
           );
+        } catch (error) {
+          console.error('❌ [S3] Autocomplete error for play command:', error);
+          await interaction.respond([]);
         }
         return;
       }
 
-      // Handle delete command autocomplete
+      // Handle delete command autocomplete with S3
       if (interaction.commandName === 'delete') {
-        const { getAvailableFiles } = await import('../commands/audio/play');
-        if (typeof getAvailableFiles === 'function') {
-          const focusedValue = interaction.options.getFocused();
-          const files = getAvailableFiles(context.audioFolder);
+        const focusedValue = interaction.options.getFocused();
+        
+        try {
+          const files = await this.getAvailableFilesFromS3(context);
           const filtered = files.filter(file => 
             file.toLowerCase().includes(focusedValue.toLowerCase())
           ).slice(0, 25);
@@ -199,6 +204,9 @@ export class CommandHandler {
           await interaction.respond(
             filtered.map(file => ({ name: file, value: file }))
           );
+        } catch (error) {
+          console.error('❌ [S3] Autocomplete error for delete command:', error);
+          await interaction.respond([]);
         }
         return;
       }
@@ -207,12 +215,24 @@ export class CommandHandler {
       await interaction.respond([]);
 
     } catch (error) {
-      console.error('Error in autocomplete:', error);
+      console.error('❌ Error in autocomplete:', error);
       try {
         await interaction.respond([]);
       } catch (responseError) {
-        console.error('Failed to send empty autocomplete response:', responseError);
+        console.error('❌ Failed to send empty autocomplete response:', responseError);
       }
+    }
+  }
+
+  // Helper method to get available files from S3
+  private async getAvailableFilesFromS3(context: BotContext): Promise<string[]> {
+    try {
+      const { s3Service } = context;
+      const files = await s3Service.listFiles();
+      return files.map((file: AudioFile) => file.name).sort();
+    } catch (error) {
+      console.error('❌ [S3] Error getting available files for autocomplete:', error);
+      return [];
     }
   }
 

@@ -7,8 +7,7 @@ import {
   MessageFlags
 } from 'discord.js';
 import { Command, CommandContext } from '@/types/Command';
-import fs from 'fs';
-import path from 'path';
+import { PermissionChecker } from '@/utils/permissions';
 
 export const uploadCommand: Command = {
   data: new SlashCommandBuilder()
@@ -22,15 +21,12 @@ export const uploadCommand: Command = {
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction: ChatInputCommandInteraction, context: CommandContext) {
-    const { audioFolder } = context;
+    const { s3Service } = context;
     
     // Double-check admin permissions (extra security)
     const member = interaction.member as GuildMember;
-    if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
-      await interaction.reply({
-        content: '❌ **Access Denied!** Only administrators can upload meme files.',
-        flags: MessageFlags.Ephemeral
-      });
+    if (!PermissionChecker.isAdmin(member)) {
+      await PermissionChecker.sendPermissionDenied(interaction);
       return;
     }
 
@@ -55,11 +51,20 @@ export const uploadCommand: Command = {
       return;
     }
 
-    // Check for existing file
-    const filePath = path.join(audioFolder, attachment.name);
-    if (fs.existsSync(filePath)) {
+    // Check for existing file in S3
+    try {
+      const fileExists = await s3Service.fileExists(attachment.name);
+      if (fileExists) {
+        await interaction.reply({
+          content: `❌ File **${attachment.name}** already exists in cloud storage! Please rename or delete the existing file first.`,
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('❌ [S3] Error checking file existence:', error);
       await interaction.reply({
-        content: `❌ File **${attachment.name}** already exists! Please rename or delete the existing file first.`,
+        content: '❌ Unable to check file existence. Please try again.',
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -68,39 +73,70 @@ export const uploadCommand: Command = {
     await interaction.deferReply();
 
     try {
+      // Download file from Discord
       const response = await fetch(attachment.url);
       if (!response.ok) {
         throw new Error(`Failed to download file: ${response.statusText}`);
       }
       
-      const buffer = await response.arrayBuffer();
-      fs.writeFileSync(filePath, Buffer.from(buffer));
+      const buffer = Buffer.from(await response.arrayBuffer());
+      
+      // Upload to S3
+      const fileUrl = await s3Service.uploadFile(
+        attachment.name, 
+        buffer, 
+        'audio/mpeg'
+      );
       
       // Log the upload for audit purposes
-      console.log(`📁 [UPLOAD] ${member.displayName} (${member.id}) uploaded: ${attachment.name}`);
+      console.log(`📁 [UPLOAD] ${member.displayName} (${member.id}) uploaded to S3: ${attachment.name}`);
       
       const embed = new EmbedBuilder()
-        .setTitle('✅ Meme File Uploaded Successfully!')
-        .setDescription(`**${attachment.name}** has been added to the RDP-MemeBox library.`)
+        .setTitle('✅ Audio File Uploaded Successfully!')
+        .setDescription(`**${attachment.name}** has been uploaded to RDP Soundboard cloud storage.`)
         .addFields(
           { name: '📁 File Name', value: attachment.name, inline: true },
           { name: '📏 File Size', value: `${(attachment.size / 1024 / 1024).toFixed(2)} MB`, inline: true },
           { name: '👤 Uploaded by', value: member.displayName, inline: true },
-          { name: '🎵 How to Play', value: `Use \`/play ${attachment.name}\` or \`@RDP-MemeBox ${attachment.name}\``, inline: false }
+          { name: '☁️ Storage', value: 'AWS S3 Cloud Storage', inline: true },
+          { name: '🌐 Access', value: 'Available globally', inline: true },
+          { name: '🎵 How to Play', value: `Use \`/play ${attachment.name}\` or \`@RDP Soundboard ${attachment.name}\``, inline: false }
         )
         .setColor(0x00AE86)
         .setTimestamp()
-        .setFooter({ text: `RDP Datacenter • Admin Upload` });
+        .setFooter({ text: 'RDP Datacenter • Cloud Upload' });
 
       await interaction.editReply({ embeds: [embed] });
 
-      // Optional: Send notification to a log channel
-      // You can add this if you want upload notifications in a specific channel
+      // Optional: Get updated file count for logging
+      try {
+        const stats = await s3Service.getBucketStats();
+        console.log(`📊 [S3] Total files: ${stats.fileCount}, Total size: ${(stats.totalSize / 1024 / 1024).toFixed(2)}MB`);
+      } catch (error) {
+        // Don't fail the command if stats fail
+        console.error('⚠️ [S3] Failed to get bucket stats:', error);
+      }
       
     } catch (error) {
-      console.error('❌ [ERROR] Upload failed:', error);
+      console.error('❌ [ERROR] S3 Upload failed:', error);
+      
+      let errorMessage = '❌ Failed to upload file to cloud storage.';
+      
+      // Provide more specific error messages
+      if (error instanceof Error) {
+        if (error.message.includes('credentials')) {
+          errorMessage += ' (AWS credentials issue)';
+        } else if (error.message.includes('bucket')) {
+          errorMessage += ' (S3 bucket access issue)';
+        } else if (error.message.includes('network')) {
+          errorMessage += ' (Network connectivity issue)';
+        }
+      }
+      
+      errorMessage += ' Please contact the system administrator.';
+      
       await interaction.editReply({
-        content: '❌ Failed to upload file. Please try again or contact the system administrator.'
+        content: errorMessage
       });
     }
   }

@@ -6,15 +6,17 @@ import {
   Message 
 } from 'discord.js';
 import { AudioPlayer } from '@discordjs/voice';
+import { S3Service } from '@/utils/s3';
 
 export interface CommandContext {
   client: Client;
   audioPlayer: AudioPlayer;
   currentConnection: any;
-  audioFolder: string;
+  audioFolder: string; // Keep for backward compatibility/local fallback
   currentVolume: number;
   setVolume: (volume: number) => void;
   setConnection: (connection: any) => void;
+  s3Service: S3Service;
 }
 
 export interface Command {

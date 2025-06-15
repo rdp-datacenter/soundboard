@@ -1,10 +1,11 @@
 {
     "name": "soundboard",
-    "version": "1.0.0",
-    "description": "Discord bot that stores and plays MP3 files in voice channels",
+    "version": "2.0.0",
+    "description": "Discord bot that stores and plays MP3 files from AWS S3 cloud storage in voice channels",
     "main": "dist/index.js",
     "scripts": {
         "build": "tsc",
+        "test:s3": "ts-node -r tsconfig-paths/register scripts/test-s3.ts",
         "start": "node -r tsconfig-paths/register dist/index.js",
         "dev": "ts-node -r tsconfig-paths/register src/index.ts",
         "watch": "tsc -w"
@@ -14,11 +15,17 @@
         "bot",
         "music",
         "mp3",
-        "typescript"
+        "typescript",
+        "aws",
+        "s3",
+        "cloud-storage",
+        "soundboard"
     ],
     "author": "RDP Datacenter",
     "license": "MIT",
     "dependencies": {
+        "@aws-sdk/client-s3": "^3.828.0",
+        "@aws-sdk/lib-storage": "^3.828.0",
         "@discordjs/voice": "^0.18.0",
         "discord.js": "^14.19.3",
         "dotenv": "^16.5.0",
@@ -34,5 +41,13 @@
     },
     "engines": {
         "node": ">=16.0.0"
-    }
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/rdp-datacenter/soundboard.git"
+    }, 
+    "bugs": {
+        "url": "https://github.com/rdp-datacenter/soundboard/issues"
+    },
+    "homepage": "https://github.com/rdp-datacenter/soundboard#readme"
 }
