@@ -5,6 +5,7 @@
     "main": "dist/index.js",
     "scripts": {
         "build": "tsc && tsc-alias",
+        "test:db": "ts-node -r tsconfig-paths/register scripts/test-db.ts",
         "test:s3": "ts-node -r tsconfig-paths/register scripts/test-s3.ts",
         "start": "node -r tsconfig-paths/register dist/index.js",
         "dev": "ts-node -r tsconfig-paths/register src/index.ts",
