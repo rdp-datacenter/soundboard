@@ -1,258 +1,481 @@
-import {
-  ChatInputCommandInteraction,
-  SlashCommandBuilder,
-  EmbedBuilder,
+// src/commands/music/play.ts
+import { 
+  ChatInputCommandInteraction, 
+  SlashCommandBuilder, 
+  EmbedBuilder, 
   GuildMember,
   VoiceChannel,
-  Message
+  Message,
+  AutocompleteInteraction
 } from 'discord.js';
-import {
-  joinVoiceChannel,
-  createAudioResource,
-  VoiceConnectionStatus,
-  entersState
-} from '@discordjs/voice';
 import { Command, TextCommand, CommandContext } from '@/types/Command';
-import { S3Service } from '@/utils/s3';
+import { LavalinkUtils, SpotifyUtils } from '@/utils/lavalinkUtils';
+import { BotError, ErrorType } from '@/types/Command';
+
+// Type definitions for Spotify API response
+interface SpotifyTrack {
+  id: string;
+  name: string;
+  duration_ms: number;
+  artists: Array<{
+    id: string;
+    name: string;
+  }>;
+  album: {
+    id: string;
+    name: string;
+    images: Array<{
+      url: string;
+      height: number;
+      width: number;
+    }>;
+  };
+  external_urls: {
+    spotify: string;
+  };
+}
+
+// Type definition for Lavalink node
+interface LavalinkNode {
+  connected: boolean;
+  search: (params: {
+    query: string;
+    source: string;
+  }, requester: any) => Promise<{
+    tracks: any[];
+    loadType: string;
+  }>;
+}
+
+// Type definition for extended client with lavalinkManager
+interface ExtendedClient {
+  lavalinkManager: {
+    nodeManager: {
+      nodes: Map<string, LavalinkNode>;
+    };
+  };
+}
 
 export const playCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('play')
-    .setDescription('Play an MP3 file in voice channel')
+    .setDescription('Play music from various sources (YouTube, Spotify, SoundCloud, etc.)')
     .addStringOption(option =>
-      option.setName('filename')
-        .setDescription('Name of the MP3 file to play')
+      option.setName('query')
+        .setDescription('Song name, artist, URL, or search term')
         .setRequired(true)
         .setAutocomplete(true)
+    )
+    .addStringOption(option =>
+      option.setName('source')
+        .setDescription('Source to search from')
+        .setRequired(false)
+        .addChoices(
+          { name: 'YouTube', value: 'youtube' },
+          { name: 'YouTube Music', value: 'youtubemusic' },
+          { name: 'Spotify', value: 'spotify' },
+          { name: 'SoundCloud', value: 'soundcloud' }
+        )
     ),
 
   async execute(interaction: ChatInputCommandInteraction, context: CommandContext) {
-    const fileName = interaction.options.getString('filename', true);
+    const query = interaction.options.getString('query', true);
+    const source = interaction.options.getString('source') || 'youtube';
+    
     await interaction.deferReply();
     
-    const result = await playAudio(interaction, fileName, context);
-    if (typeof result === 'string') {
-      await interaction.editReply(result);
+    try {
+      await handlePlayCommand(interaction, query, source, context);
+    } catch (error) {
+      if (error instanceof BotError) {
+        await interaction.editReply(`❌ ${error.message}`);
+      } else {
+        console.error('❌ [PLAY] Unexpected error:', error);
+        await interaction.editReply('❌ An unexpected error occurred while playing the track.');
+      }
+    }
+  },
+
+  async autocomplete(interaction: AutocompleteInteraction) {
+    const query = interaction.options.getFocused();
+    
+    if (!query || query.length < 2) {
+      return interaction.respond([]);
+    }
+
+    try {
+      const extendedClient = interaction.client as any as ExtendedClient;
+      const { lavalinkManager } = extendedClient;
+      
+      // Get an available node for searching
+      const nodes = Array.from(lavalinkManager.nodeManager.nodes.values());
+      const availableNode = nodes.find((node: LavalinkNode) => node.connected);
+      
+      if (!availableNode) {
+        return interaction.respond([]);
+      }
+
+      const searchResult = await availableNode.search({
+        query: `ytsearch:${query}`,
+        source: 'youtube'
+      }, LavalinkUtils.createRequester(interaction.user));
+
+      const choices = searchResult.tracks?.slice(0, 10).map((track: any) => ({
+        name: `${track.info.title} - ${track.info.author}`.slice(0, 100),
+        value: track.info.uri
+      })) || [];
+
+      await interaction.respond(choices);
+    } catch (error) {
+      console.error('❌ [AUTOCOMPLETE] Error:', error);
+      await interaction.respond([]);
     }
   }
 };
 
 export const playTextCommand: TextCommand = {
   name: 'play',
+  aliases: ['p'],
   
   async execute(message: Message, args: string[], context: CommandContext) {
-    const fileName = args.join(' ').trim();
-    if (!fileName) {
-      await message.reply('❌ Please specify an MP3 file name! Example: `!play filename.mp3`');
+    const query = args.join(' ').trim();
+    if (!query) {
+      await message.reply('❌ Please provide a song name, URL, or search term!');
       return;
     }
     
-    await playAudio(message, fileName, context);
+    try {
+      await handlePlayCommand(message, query, 'youtube', context);
+    } catch (error) {
+      if (error instanceof BotError) {
+        await message.reply(`❌ ${error.message}`);
+      } else {
+        console.error('❌ [PLAY] Unexpected error:', error);
+        await message.reply('❌ An unexpected error occurred while playing the track.');
+      }
+    }
   }
 };
 
-export async function handleMention(message: Message, fileName: string, context: CommandContext) {
-  if (fileName) {
-    await playAudio(message, fileName, context);
-  } else {
-    await message.reply('Please specify an MP3 file name! Example: `@RDP Soundboard filename.mp3`');
-  }
-}
-
-async function playAudio(
-  source: ChatInputCommandInteraction | Message, 
-  fileName: string, 
+async function handlePlayCommand(
+  source: ChatInputCommandInteraction | Message,
+  query: string,
+  searchSource: string,
   context: CommandContext
-): Promise<string | void> {
-  const { client, audioPlayer, s3Service, currentVolume, setConnection, guildId, dbService } = context;
+): Promise<void> {
+  const { lavalinkManager, guildId, dbService } = context;
   
-  // Get the user's voice channel
-  let member: GuildMember;
+  // Validate Lavalink manager
+  LavalinkUtils.validateManager(lavalinkManager);
   
-  if (source instanceof ChatInputCommandInteraction) {
-    member = source.member as GuildMember;
-  } else {
-    member = source.member as GuildMember;
-  }
-
+  // Get member and validate voice channel
+  const member = source.member as GuildMember;
+  LavalinkUtils.validateMusicCommand(member);
+  
   const voiceChannel = member.voice.channel as VoiceChannel;
+  const requester = LavalinkUtils.createRequester(source instanceof Message ? source.author : source.user);
   
-  if (!voiceChannel) {
-    const errorMsg = '❌ You need to be in a voice channel to play music!';
-    if (source instanceof ChatInputCommandInteraction) {
-      return errorMsg;
-    } else {
-      await source.reply(errorMsg);
-      return;
-    }
+  // Handle Spotify URLs specially
+  if (SpotifyUtils.isSpotifyUrl(query)) {
+    await handleSpotifyUrl(source, query, voiceChannel, context, requester);
+    return;
   }
-
-  // Check if file exists in S3 for this server
+  
+  // Handle direct URLs
+  if (LavalinkUtils.isValidAudioUrl(query)) {
+    searchSource = LavalinkUtils.extractPlatform(query);
+  }
+  
+  // Search for tracks
+  const searchQuery = LavalinkUtils.isValidAudioUrl(query) ? query : `${LavalinkUtils.getSearchSource(searchSource)}:${query}`;
+  const tracks = await LavalinkUtils.searchTracks(lavalinkManager, searchQuery, requester);
+  
+  if (tracks.length === 0) {
+    throw new BotError('No tracks found for your search query.', ErrorType.VALIDATION_ERROR);
+  }
+  
+  // Get or create player
+  const player = await LavalinkUtils.getOrCreatePlayer(
+    lavalinkManager,
+    guildId,
+    voiceChannel.id,
+    source.channelId
+  );
+  
+  // Add track(s) to queue
+  const track = tracks[0];
+  await LavalinkUtils.addTrackToQueue(player, track, requester);
+  
+  // Set volume based on server settings
   try {
-    const fileExists = await s3Service.fileExists(fileName, guildId);
-    if (!fileExists) {
-      const errorMsg = `❌ File "${fileName}" not found in this server's sound collection! Use \`/list\` to see available files.`;
-      if (source instanceof ChatInputCommandInteraction) {
-        return errorMsg;
-      } else {
-        await source.reply(errorMsg);
-        return;
-      }
+    if (guildId !== 'global') {
+      const settings = await dbService.getServerSettings(guildId);
+      await LavalinkUtils.setPlayerVolume(player, Math.round(settings.defaultVolume * 100));
     }
   } catch (error) {
-    console.error(`❌ [S3] Error checking file existence for server ${guildId}:`, error);
-    const errorMsg = '❌ Unable to access cloud storage. Please try again.';
-    if (source instanceof ChatInputCommandInteraction) {
-      return errorMsg;
-    } else {
-      await source.reply(errorMsg);
-      return;
-    }
+    console.warn(`⚠️ [DB] Could not get server settings for ${guildId}:`, error);
   }
-
-  try {
-    // Join voice channel
-    const connection = joinVoiceChannel({
-      channelId: voiceChannel.id,
-      guildId: voiceChannel.guild.id,
-      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+  
+  // Create response embed
+  const embed = new EmbedBuilder()
+    .setTitle('🎵 Track Added to Queue')
+    .setDescription(`**[${track.info.title}](${track.info.uri})**\nby ${track.info.author}`)
+    .addFields(
+      { name: '⏱️ Duration', value: LavalinkUtils.formatDuration(track.info.duration), inline: true },
+      { name: '🎵 Source', value: track.info.sourceName, inline: true },
+      { name: '👤 Requested by', value: requester.username, inline: true }
+    )
+    .setColor(0x00FF00)
+    .setTimestamp();
+  
+  if (track.info.artworkUrl) {
+    embed.setThumbnail(track.info.artworkUrl);
+  }
+  
+  // Add queue position if not the next track
+  if (player.queue.tracks.length > 1) {
+    embed.addFields({
+      name: '📋 Queue Position',
+      value: `${player.queue.tracks.length}`,
+      inline: true
     });
+  }
+  
+  if (source instanceof ChatInputCommandInteraction) {
+    await source.editReply({ embeds: [embed] });
+  } else {
+    await source.reply({ embeds: [embed] });
+  }
+  
+  // Log play for analytics
+  try {
+    await dbService.logAudioPlay(guildId, track.info.title, requester.id);
+  } catch (error) {
+    console.warn(`⚠️ [DB] Could not log audio play:`, error);
+  }
+  
+  console.log(`🎵 [PLAY] Added track in ${guildId}: ${track.info.title}`);
+}
 
-    // Update connection in bot context
-    setConnection(connection);
-
-    // Wait for connection to be ready
-    await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
-
-    // Get server's default volume if available
-    let playbackVolume = currentVolume; // Default to current volume
+async function handleSpotifyUrl(
+  source: ChatInputCommandInteraction | Message,
+  url: string,
+  voiceChannel: VoiceChannel,
+  context: CommandContext,
+  requester: any
+): Promise<void> {
+  const { lavalinkManager, guildId } = context;
+  
+  const trackId = SpotifyUtils.extractTrackId(url);
+  if (!trackId) {
+    throw new BotError('Invalid Spotify URL.', ErrorType.VALIDATION_ERROR);
+  }
+  
+  try {
+    // Get Spotify track metadata
+    const token = await SpotifyUtils.getAccessToken();
+    const response = await fetch(`https://api.spotify.com/v1/tracks/${trackId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
     
-    // If in a guild, try to get the server's default volume
-    if (guildId !== 'global') {
-      try {
-        const settings = await dbService.getServerSettings(guildId);
-        // Only use default volume if this is a new playback (currentVolume is still at default)
-        // This way we don't override manual volume adjustments during a session
-        if (currentVolume === 0.5) { // 0.5 is the bot's startup default
-          playbackVolume = settings.defaultVolume;
-          // Also update the context's currentVolume for future playback
-          context.setVolume(settings.defaultVolume);
-          console.log(`🔊 [VOLUME] Using server ${guildId} default volume: ${Math.round(settings.defaultVolume * 100)}%`);
-        }
-      } catch (error) {
-        console.warn(`⚠️ [DB] Could not get default volume for server ${guildId}:`, error);
-        // Continue with the current volume if there's an error
-      }
-    }
-
-    // Get file stream from S3
-    let audioResource;
-    try {
-      // Option 1: Stream directly from S3 (recommended for better performance)
-      const fileStream = await s3Service.getFileStream(fileName, guildId);
-      
-      audioResource = createAudioResource(fileStream, {
-        inlineVolume: true // Enable volume control
-      });
-      
-      console.log(`🎵 [PLAY] Server ${guildId} streaming: ${fileName}`);
-    } catch (streamError) {
-      console.error(`❌ [S3] Stream error for server ${guildId}, falling back to URL:`, streamError);
-      
-      // Option 2: Fallback to public URL streaming
-      const fileUrl = s3Service.getServerFileUrl(fileName, guildId);
-      
-      audioResource = createAudioResource(fileUrl, {
-        inlineVolume: true
-      });
-      
-      console.log(`🎵 [PLAY] Server ${guildId} streaming from URL: ${fileUrl}`);
+    if (!response.ok) {
+      throw new Error(`Spotify API error: ${response.status}`);
     }
     
-    // Set the volume (server default or current volume)
-    if (audioResource.volume) {
-      audioResource.volume.setVolume(playbackVolume);
+    // Properly type the Spotify response
+    const spotifyTrack = await response.json() as SpotifyTrack;
+    
+    // Search for the track on YouTube
+    const searchQuery = `${spotifyTrack.artists[0].name} ${spotifyTrack.name}`;
+    const tracks = await LavalinkUtils.searchTracks(lavalinkManager, searchQuery, requester, 'ytsearch');
+    
+    if (tracks.length === 0) {
+      throw new BotError('Could not find this Spotify track on YouTube.', ErrorType.VALIDATION_ERROR);
     }
-
-    audioPlayer.play(audioResource);
-    connection.subscribe(audioPlayer);
-
-    // Get volume emoji based on current volume
-    const volumePercent = Math.round(playbackVolume * 100);
-    let volumeEmoji = '🔇';
-    if (volumePercent > 66) volumeEmoji = '🔊';
-    else if (volumePercent > 33) volumeEmoji = '🔉';
-    else if (volumePercent > 0) volumeEmoji = '🔈';
-
-    // Get file info for display
-    let fileSize = 'Unknown';
-    try {
-      const fileInfo = await s3Service.getFileInfo(fileName, guildId);
-      if (fileInfo) {
-        fileSize = `${(fileInfo.size / 1024 / 1024).toFixed(2)} MB`;
-      }
-    } catch (error) {
-      // Don't fail if we can't get file info
-      console.warn(`⚠️ [S3] Could not get file info for server ${guildId}:`, error);
-    }
-
-    // Get the folder name for display
-    const folderName = process.env.S3_FOLDER || 'audio';
-
+    
+    // Get or create player and add track
+    const player = await LavalinkUtils.getOrCreatePlayer(
+      lavalinkManager,
+      guildId,
+      voiceChannel.id,
+      source.channelId
+    );
+    
+    await LavalinkUtils.addTrackToQueue(player, tracks[0], requester);
+    
+    // Create enhanced embed with Spotify info
     const embed = new EmbedBuilder()
-      .setTitle('🎵 Now Playing from Cloud')
-      .setDescription(`**${fileName}**`)
+      .setTitle('🎵 Spotify Track Added')
+      .setDescription(`**[${spotifyTrack.name}](${url})**\nby ${spotifyTrack.artists[0].name}`)
       .addFields(
-        { name: '🏠 Voice Channel', value: voiceChannel.name, inline: true },
-        { name: '👤 Requested by', value: member.displayName, inline: true },
-        { name: `${volumeEmoji} Volume`, value: `${volumePercent}%`, inline: true },
-        { name: '☁️ Source', value: `AWS S3 (${folderName}/${guildId}/)`, inline: true },
-        { name: '📏 File Size', value: fileSize, inline: true },
-        { name: '🌐 Streaming', value: 'Global CDN', inline: true }
+        { name: '💿 Album', value: spotifyTrack.album.name, inline: true },
+        { name: '⏱️ Duration', value: LavalinkUtils.formatDuration(spotifyTrack.duration_ms), inline: true },
+        { name: '👤 Requested by', value: requester.username, inline: true }
       )
-      .setColor(0x00AE86)
+      .setColor(0x1DB954) // Spotify green
       .setTimestamp()
-      .setFooter({ text: 'Use /volume to adjust playback volume • Cloud-powered audio' });
-
+      .setFooter({ text: 'Played via YouTube • Metadata from Spotify' });
+    
+    if (spotifyTrack.album.images[0]) {
+      embed.setThumbnail(spotifyTrack.album.images[0].url);
+    }
+    
     if (source instanceof ChatInputCommandInteraction) {
       await source.editReply({ embeds: [embed] });
     } else {
       await source.reply({ embeds: [embed] });
     }
-
+    
   } catch (error) {
-    console.error(`❌ [ERROR] Audio playback failed for server ${guildId}:`, error);
+    console.error('❌ [SPOTIFY] Error processing Spotify URL:', error);
+    throw new BotError('Failed to process Spotify URL.', ErrorType.SPOTIFY_ERROR);
+  }
+}
+
+// Additional music commands
+
+export const skipCommand: Command = {
+  data: new SlashCommandBuilder()
+    .setName('skip')
+    .setDescription('Skip the current track'),
+
+  async execute(interaction: ChatInputCommandInteraction, context: CommandContext) {
+    await interaction.deferReply();
     
-    let errorMsg = '❌ Failed to play audio.';
-    
-    // Provide more specific error messages
-    if (error instanceof Error) {
-      if (error.message.includes('stream')) {
-        errorMsg += ' (Streaming issue)';
-      } else if (error.message.includes('connection')) {
-        errorMsg += ' (Voice connection issue)';
-      } else if (error.message.includes('timeout')) {
-        errorMsg += ' (Connection timeout)';
+    try {
+      const { lavalinkManager, guildId } = context;
+      const member = interaction.member as GuildMember;
+      
+      LavalinkUtils.validateManager(lavalinkManager);
+      LavalinkUtils.validateMusicCommand(member);
+      
+      const player = lavalinkManager.getPlayer(guildId);
+      if (!player) {
+        throw new BotError('No music player found.', ErrorType.VALIDATION_ERROR);
+      }
+      
+      const skippedTrack = await LavalinkUtils.skipTrack(player);
+      
+      const embed = new EmbedBuilder()
+        .setTitle('⏭️ Track Skipped')
+        .setDescription(`Skipped: **${skippedTrack.info.title}**`)
+        .setColor(0xFFFF00)
+        .setTimestamp();
+      
+      await interaction.editReply({ embeds: [embed] });
+      
+    } catch (error) {
+      if (error instanceof BotError) {
+        await interaction.editReply(`❌ ${error.message}`);
+      } else {
+        console.error('❌ [SKIP] Error:', error);
+        await interaction.editReply('❌ Failed to skip track.');
       }
     }
+  }
+};
+
+export const pauseCommand: Command = {
+  data: new SlashCommandBuilder()
+    .setName('pause')
+    .setDescription('Pause or resume the current track'),
+
+  async execute(interaction: ChatInputCommandInteraction, context: CommandContext) {
+    await interaction.deferReply();
     
-    errorMsg += ' Please try again.';
-    
-    if (source instanceof ChatInputCommandInteraction) {
-      return errorMsg;
-    } else {
-      await source.reply(errorMsg);
+    try {
+      const { lavalinkManager, guildId } = context;
+      const member = interaction.member as GuildMember;
+      
+      LavalinkUtils.validateManager(lavalinkManager);
+      LavalinkUtils.validateMusicCommand(member);
+      
+      const player = lavalinkManager.getPlayer(guildId);
+      if (!player) {
+        throw new BotError('No music player found.', ErrorType.VALIDATION_ERROR);
+      }
+      
+      const isPaused = await LavalinkUtils.togglePlayback(player);
+      
+      const embed = new EmbedBuilder()
+        .setTitle(isPaused ? '⏸️ Playback Paused' : '▶️ Playback Resumed')
+        .setDescription(isPaused ? 'Music has been paused.' : 'Music has been resumed.')
+        .setColor(isPaused ? 0xFF8C00 : 0x00FF00)
+        .setTimestamp();
+      
+      await interaction.editReply({ embeds: [embed] });
+      
+    } catch (error) {
+      if (error instanceof BotError) {
+        await interaction.editReply(`❌ ${error.message}`);
+      } else {
+        console.error('❌ [PAUSE] Error:', error);
+        await interaction.editReply('❌ Failed to toggle playback.');
+      }
     }
   }
-}
+};
 
-// Updated to work with server-specific S3 folders
-export async function getAvailableFiles(s3Service: S3Service, guildId: string): Promise<string[]> {
-  try {
-    const files = await s3Service.listFiles(guildId);
-    return files.map(file => file.name).sort();
-  } catch (error) {
-    console.error(`❌ [S3] Error getting available files for server ${guildId}:`, error);
-    return [];
+export const queueCommand: Command = {
+  data: new SlashCommandBuilder()
+    .setName('queue')
+    .setDescription('View the current music queue')
+    .addIntegerOption(option =>
+      option.setName('page')
+        .setDescription('Page number to view')
+        .setRequired(false)
+        .setMinValue(1)
+    ),
+
+  async execute(interaction: ChatInputCommandInteraction, context: CommandContext) {
+    await interaction.deferReply();
+    
+    try {
+      const { lavalinkManager, guildId } = context;
+      const page = interaction.options.getInteger('page') || 1;
+      
+      LavalinkUtils.validateManager(lavalinkManager);
+      
+      const player = lavalinkManager.getPlayer(guildId);
+      if (!player) {
+        throw new BotError('No music player found.', ErrorType.VALIDATION_ERROR);
+      }
+      
+      const queueInfo = LavalinkUtils.formatQueue(player, page, 10);
+      const playerInfo = LavalinkUtils.getPlayerInfo(player);
+      
+      const embed = new EmbedBuilder()
+        .setTitle('🎵 Music Queue')
+        .setDescription(queueInfo.content)
+        .addFields(
+          { name: '🔊 Volume', value: `${playerInfo.volume}%`, inline: true },
+          { name: '🔁 Repeat', value: playerInfo.repeatMode, inline: true },
+          { name: '📊 Status', value: playerInfo.isPlaying ? 'Playing' : playerInfo.isPaused ? 'Paused' : 'Stopped', inline: true }
+        )
+        .setColor(0x9370DB)
+        .setTimestamp();
+      
+      if (queueInfo.totalPages > 1) {
+        embed.setFooter({ text: `Page ${queueInfo.currentPage}/${queueInfo.totalPages}` });
+      }
+      
+      await interaction.editReply({ embeds: [embed] });
+      
+    } catch (error) {
+      if (error instanceof BotError) {
+        await interaction.editReply(`❌ ${error.message}`);
+      } else {
+        console.error('❌ [QUEUE] Error:', error);
+        await interaction.editReply('❌ Failed to get queue information.');
+      }
+    }
   }
-}
+};
+
+export default {
+  playCommand,
+  playTextCommand,
+  skipCommand,
+  pauseCommand,
+  queueCommand
+};

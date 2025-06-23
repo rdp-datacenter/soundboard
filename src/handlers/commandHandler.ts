@@ -7,7 +7,8 @@ import {
   AutocompleteInteraction,
   MessageFlags
 } from 'discord.js';
-import { Command, TextCommand, BotContext } from '@/types/Command';
+import { Command, TextCommand, CommandContext } from '@/types/Command';
+import { handleMention, isBotMention } from '@/utils/handleMention';
 import fs from 'fs';
 import path from 'path';
 import { AudioFile } from '@/utils/s3';
@@ -101,7 +102,7 @@ export class CommandHandler {
     }
   }
 
-  async handleSlashCommand(interaction: ChatInputCommandInteraction, context: BotContext): Promise<void> {
+  async handleSlashCommand(interaction: ChatInputCommandInteraction, context: CommandContext): Promise<void> {
     const command = this.commands.get(interaction.commandName);
     
     if (!command) {
@@ -127,23 +128,42 @@ export class CommandHandler {
     }
   }
 
-  async handleTextCommand(message: Message, context: BotContext): Promise<void> {
-    // Handle mentions
+  async handleTextCommand(message: Message, context: CommandContext): Promise<void> {
+    // Handle bot mentions using the utility function
+    if (isBotMention(message, context.client.user?.id || '')) {
+      await handleMention(message, context);
+      return;
+    }
+
+    // Handle direct mentions for file playback
     if (message.mentions.has(context.client.user!)) {
       const args = message.content.replace(`<@${context.client.user!.id}>`, '').trim().split(' ');
       const fileName = args[0];
       
-      // Try to find a mention handler (usually in audio/play.ts)
-      try {
-        const { handleMention } = await import('../commands/audio/play');
-        if (typeof handleMention === 'function') {
-          await handleMention(message, fileName, context);
-        } else {
-          await message.reply('Please specify an MP3 file name! Example: `@RDP Soundboard filename.mp3`');
+      if (fileName) {
+        // Try to play the mentioned file
+        try {
+          // Check if file exists in S3
+          const files = await context.s3Service.listFiles(context.guildId);
+          const fileExists = files.some(file => file.name.toLowerCase() === fileName.toLowerCase());
+          
+          if (fileExists) {
+            // Create a simulated play command
+            const playCommand = this.textCommands.get('play');
+            if (playCommand) {
+              await playCommand.execute(message, [fileName], context);
+            } else {
+              await message.reply(`❌ Play command not found. File "${fileName}" exists but cannot be played.`);
+            }
+          } else {
+            await message.reply(`❌ File "${fileName}" not found. Use \`!list\` to see available files.`);
+          }
+        } catch (error) {
+          console.error(`❌ Error playing mentioned file for server ${context.guildId}:`, error);
+          await message.reply('❌ Error accessing audio files. Please try again.');
         }
-      } catch (error) {
-        console.error(`❌ No mention handler found for server ${context.guildId}:`, error);
-        await message.reply('Please specify an MP3 file name! Example: `@RDP Soundboard filename.mp3`');
+      } else {
+        await message.reply('Please specify an audio file name! Example: `@RDP Soundboard filename.mp3`');
       }
       return;
     }
@@ -153,7 +173,7 @@ export class CommandHandler {
     try {
       if (context.guildId !== 'global') {
         const serverSettings = await context.dbService.getServerSettings(context.guildId);
-        prefix = serverSettings.prefix;
+        prefix = serverSettings.prefix || '!';
       }
     } catch (error) {
       console.error(`❌ Error getting server prefix for ${context.guildId}:`, error);
@@ -168,7 +188,8 @@ export class CommandHandler {
   
     if (!commandName) return;
   
-    const command = this.textCommands.get(commandName);
+    // Check for aliases
+    const command = this.textCommands.get(commandName) || this.findCommandByAlias(commandName);
     
     if (!command) return;
   
@@ -179,9 +200,18 @@ export class CommandHandler {
       await message.reply('❌ There was an error while executing this command!');
     }
   }
-  
 
-  async handleAutocomplete(interaction: AutocompleteInteraction, context: BotContext): Promise<void> {
+  // Helper method to find command by alias
+  private findCommandByAlias(alias: string): TextCommand | undefined {
+    for (const command of this.textCommands.values()) {
+      if (command.aliases && command.aliases.includes(alias)) {
+        return command;
+      }
+    }
+    return undefined;
+  }
+
+  async handleAutocomplete(interaction: AutocompleteInteraction, context: CommandContext): Promise<void> {
     try {
       // Get the guild ID from the context
       const { s3Service, guildId } = context;
@@ -273,6 +303,13 @@ export class CommandHandler {
         return;
       }
 
+      // Handle other command autocompletions by delegating to the command's autocomplete method
+      const command = this.commands.get(interaction.commandName);
+      if (command && 'autocomplete' in command && typeof command.autocomplete === 'function') {
+        await command.autocomplete(interaction, context);
+        return;
+      }
+
       // Default empty response for unhandled autocomplete
       await interaction.respond([]);
 
@@ -287,7 +324,7 @@ export class CommandHandler {
   }
 
   // Helper method to get available files from S3 for a specific server
-  private async getAvailableFilesFromS3(context: BotContext): Promise<string[]> {
+  private async getAvailableFilesFromS3(context: CommandContext): Promise<string[]> {
     try {
       const { s3Service, guildId } = context; // Get the guild ID from context
       
@@ -344,7 +381,7 @@ export class CommandHandler {
 
   private getCategoryFromCommandName(commandName: string): string {
     // Audio commands
-    if (['play', 'stop', 'volume', 'list'].includes(commandName)) {
+    if (['play', 'stop', 'volume', 'list', 'song', 'skip', 'pause', 'queue'].includes(commandName)) {
       return 'Audio';
     }
     

@@ -7,7 +7,6 @@ import {
   MessageFlags
 } from 'discord.js';
 import { Command, TextCommand, CommandContext } from '@/types/Command';
-import { AudioPlayerStatus } from '@discordjs/voice';
 
 export const stopCommand: Command = {
   data: new SlashCommandBuilder()
@@ -22,6 +21,8 @@ export const stopCommand: Command = {
 
 export const stopTextCommand: TextCommand = {
   name: 'stop',
+  aliases: ['disconnect', 'dc'],
+  description: 'Stop playing audio and leave voice channel',
   
   async execute(message: Message, args: string[], context: CommandContext) {
     const member = message.member as GuildMember;
@@ -35,39 +36,29 @@ async function handleStopCommand(
   member: GuildMember,
   context: CommandContext
 ) {
-  const { audioPlayer, currentConnection, setConnection } = context;
-  
-  // Check if bot is currently playing or connected
-  const isPlaying = audioPlayer.state.status === AudioPlayerStatus.Playing;
-  const isConnected = currentConnection !== null;
-  
-  if (!isConnected && !isPlaying) {
-    const errorMsg = '❌ I\'m not currently playing anything or connected to a voice channel!';
-    
-    if (source instanceof ChatInputCommandInteraction) {
-      await source.reply({ 
-        content: errorMsg, 
-        flags: MessageFlags.Ephemeral 
-      });
-    } else {
-      await source.reply(errorMsg);
-    }
-    return;
-  }
+  const { lavalinkManager, guildId } = context;
   
   try {
-    // Stop the audio player
-    if (isPlaying) {
-      audioPlayer.stop();
-      console.log('🛑 [STOP] Audio player stopped');
+    // Get the player for this guild
+    const player = lavalinkManager.getPlayer(guildId);
+    
+    if (!player || !player.connected) {
+      const errorMsg = '❌ I\'m not currently playing anything or connected to a voice channel!';
+      
+      if (source instanceof ChatInputCommandInteraction) {
+        await source.reply({ 
+          content: errorMsg, 
+          flags: MessageFlags.Ephemeral 
+        });
+      } else {
+        await source.reply(errorMsg);
+      }
+      return;
     }
     
-    // Destroy the connection
-    if (currentConnection) {
-      currentConnection.destroy();
-      setConnection(null); // Clear the connection in bot context
-      console.log('🛑 [STOP] Voice connection destroyed');
-    }
+    // Stop the player and disconnect
+    await player.destroy();
+    console.log(`🛑 [STOP] Player destroyed and disconnected from guild ${guildId}`);
     
     const embed = new EmbedBuilder()
       .setTitle('⏹️ Playback Stopped')
@@ -87,7 +78,7 @@ async function handleStopCommand(
     }
     
   } catch (error) {
-    console.error('❌ [ERROR] Stop command failed:', error);
+    console.error(`❌ [ERROR] Stop command failed for guild ${guildId}:`, error);
     const errorMsg = '❌ Failed to stop playback. The connection may have already been terminated.';
     
     if (source instanceof ChatInputCommandInteraction) {

@@ -1,0 +1,18 @@
+services:
+  lavalink:
+    image: ghcr.io/lavalink-devs/lavalink:4-alpine
+    container_name: lavalink
+    restart: unless-stopped
+    environment:
+      - _JAVA_OPTIONS=-Xmx1G -Xms1G
+      - SERVER_PORT=2333
+      - SERVER_ADDRESS=0.0.0.0
+      - LAVALINK_SERVER_PASSWORD=youshallnotpass
+    volumes:
+      - ./application.yml:/opt/Lavalink/application.yml:ro
+      - ./plugins/:/opt/Lavalink/plugins/
+      - ./logs/:/opt/Lavalink/logs/
+    ports:
+      - "2333:2333"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider http://localhost:2333/version"]
