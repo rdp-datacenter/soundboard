@@ -117,7 +117,7 @@ class CloudSoundboardBot {
   }
 
   private setupEventHandlers(): void {
-    this.client.once('ready', async () => {
+    this.client.once('clientReady', async () => {
       console.log(`🎵 ${this.client.user?.tag} is online!`);
       console.log(`🔊 Default volume set to ${Math.round(this.currentVolume * 100)}%`);
       

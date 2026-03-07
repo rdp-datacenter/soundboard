@@ -10,7 +10,8 @@ import {
   joinVoiceChannel,
   createAudioResource,
   VoiceConnectionStatus,
-  entersState
+  entersState,
+  getVoiceConnection
 } from '@discordjs/voice';
 import { Command, TextCommand, CommandContext } from '@/types/Command';
 import { S3Service } from '@/utils/s3';
@@ -76,9 +77,21 @@ async function playAudio(
   }
 
   const voiceChannel = member.voice.channel as VoiceChannel;
-  
+
   if (!voiceChannel) {
     const errorMsg = '❌ You need to be in a voice channel to play music!';
+    if (source instanceof ChatInputCommandInteraction) {
+      return errorMsg;
+    } else {
+      await source.reply(errorMsg);
+      return;
+    }
+  }
+
+  const botMember = voiceChannel.guild.members.me;
+  const perms = botMember?.permissionsIn(voiceChannel);
+  if (!perms?.has(['Connect', 'Speak'])) {
+    const errorMsg = '❌ I don\'t have permission to **Connect** or **Speak** in that voice channel!';
     if (source instanceof ChatInputCommandInteraction) {
       return errorMsg;
     } else {
@@ -111,18 +124,31 @@ async function playAudio(
   }
 
   try {
+    // Destroy any stale connection from a previous failed attempt
+    const existingConnection = getVoiceConnection(voiceChannel.guild.id);
+    if (existingConnection) {
+      existingConnection.destroy();
+    }
+
     // Join voice channel
     const connection = joinVoiceChannel({
       channelId: voiceChannel.id,
       guildId: voiceChannel.guild.id,
       adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+      selfDeaf: true,
+      selfMute: false,
     });
 
     // Update connection in bot context
     setConnection(connection);
 
     // Wait for connection to be ready
-    await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+    } catch (err) {
+      connection.destroy();
+      throw err;
+    }
 
     // Get server's default volume if available
     let playbackVolume = currentVolume; // Default to current volume

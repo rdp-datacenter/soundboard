@@ -1,9 +1,8 @@
-import { 
-  S3Client, 
-  PutObjectCommand, 
-  DeleteObjectCommand, 
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
   ListObjectsV2Command,
-  HeadObjectCommand,
   GetObjectCommand,
   CopyObjectCommand
 } from '@aws-sdk/client-s3';
@@ -27,19 +26,21 @@ export class S3Service {
   constructor() {
     // Initialize S3 client
     this.s3Client = new S3Client({
-      region: process.env.AWS_REGION || 'ap-south-1',
+      endpoint: process.env.S3_ENDPOINT,
+      region: process.env.AWS_REGION || 'us-east-1',
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID as string,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY as string,
       },
+      forcePathStyle: true,
     });
 
     this.bucketName = process.env.S3_BUCKET_NAME!;
     this.baseUrl = process.env.S3_BASE_URL!;
     
     // Set the base folder prefix (ensure it ends with /)
-    this.baseFolderPrefix = process.env.S3_FOLDER || 'audio';
-    if (!this.baseFolderPrefix.endsWith('/')) {
+    this.baseFolderPrefix = process.env.S3_FOLDER || '';
+    if (this.baseFolderPrefix && !this.baseFolderPrefix.endsWith('/')) {
       this.baseFolderPrefix += '/';
     }
 
@@ -50,8 +51,8 @@ export class S3Service {
   private validateConfig(): void {
     const required = [
       'AWS_ACCESS_KEY_ID',
-      'AWS_SECRET_ACCESS_KEY', 
-      'AWS_REGION',
+      'AWS_SECRET_ACCESS_KEY',
+      'S3_ENDPOINT',
       'S3_BUCKET_NAME',
       'S3_BASE_URL'
     ];
@@ -185,19 +186,17 @@ export class S3Service {
       const sanitizedName = this.sanitizeFileName(fileName);
       const folderPrefix = this.getServerFolderPrefix(serverId);
       const key = `${folderPrefix}${sanitizedName}`;
-      
-      const command = new HeadObjectCommand({
+
+      const command = new ListObjectsV2Command({
         Bucket: this.bucketName,
-        Key: key,
+        Prefix: key,
+        MaxKeys: 1,
       });
 
-      await this.s3Client.send(command);
-      return true;
-      
+      const response = await this.s3Client.send(command);
+      return (response.Contents?.length ?? 0) > 0;
+
     } catch (error: any) {
-      if (error.name === 'NotFound') {
-        return false;
-      }
       throw error;
     }
   }
@@ -255,23 +254,24 @@ export class S3Service {
       const sanitizedName = this.sanitizeFileName(fileName);
       const folderPrefix = this.getServerFolderPrefix(serverId);
       const key = `${folderPrefix}${sanitizedName}`;
-      
-      const command = new HeadObjectCommand({
+
+      const command = new ListObjectsV2Command({
         Bucket: this.bucketName,
-        Key: key,
+        Prefix: key,
+        MaxKeys: 1,
       });
 
       const response = await this.s3Client.send(command);
-      
+      const obj = response.Contents?.[0];
+
+      if (!obj) return null;
+
       return {
-        size: response.ContentLength || 0,
-        lastModified: response.LastModified || new Date(),
+        size: obj.Size || 0,
+        lastModified: obj.LastModified || new Date(),
       };
-      
+
     } catch (error: any) {
-      if (error.name === 'NotFound') {
-        return null;
-      }
       throw error;
     }
   }
