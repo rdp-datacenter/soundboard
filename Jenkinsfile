@@ -100,24 +100,26 @@ pipeline {
                         string(credentialsId: 'soundboard-s3-base-url',     variable: 'S3_BASE_URL'),
                         string(credentialsId: 'soundboard-neon-db-url',     variable: 'NEON_DB_URL')
                     ]) {
-                        sh """
-                            echo "Building Docker image (includes tests)..."
+                        withEnv(["BUILD_IMAGE_NAME=${IMAGE_NAME}", "BUILD_IMAGE_TAG=${IMAGE_TAG}"]) {
+                            sh '''
+                                echo "Building Docker image (includes tests)..."
 
-                            docker build \\
-                                --build-arg AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID \\
-                                --build-arg AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY \\
-                                --build-arg AWS_REGION=\$AWS_REGION \\
-                                --build-arg S3_ENDPOINT=\$S3_ENDPOINT \\
-                                --build-arg S3_BUCKET_NAME=\$S3_BUCKET_NAME \\
-                                --build-arg S3_BASE_URL=\$S3_BASE_URL \\
-                                --build-arg S3_FOLDER= \\
-                                --build-arg NEON_DB_URL=\$NEON_DB_URL \\
-                                -t ${IMAGE_NAME}:${IMAGE_TAG} \\
-                                -t ${IMAGE_NAME}:latest \\
-                                .
+                                docker build \
+                                    --build-arg AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+                                    --build-arg AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+                                    --build-arg AWS_REGION=$AWS_REGION \
+                                    --build-arg S3_ENDPOINT=$S3_ENDPOINT \
+                                    --build-arg S3_BUCKET_NAME=$S3_BUCKET_NAME \
+                                    --build-arg S3_BASE_URL=$S3_BASE_URL \
+                                    --build-arg S3_FOLDER= \
+                                    --build-arg NEON_DB_URL=$NEON_DB_URL \
+                                    -t $BUILD_IMAGE_NAME:$BUILD_IMAGE_TAG \
+                                    -t $BUILD_IMAGE_NAME:latest \
+                                    .
 
-                            echo "Docker image built successfully: ${IMAGE_NAME}:${IMAGE_TAG}"
-                        """
+                                echo "Docker image built successfully: $BUILD_IMAGE_NAME:$BUILD_IMAGE_TAG"
+                            '''
+                        }
                     }
                 }
             }
