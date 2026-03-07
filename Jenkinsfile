@@ -88,6 +88,46 @@ pipeline {
             }
         }
 
+        stage('Run Tests') {
+            steps {
+                script {
+                    withCredentials([
+                        string(credentialsId: 'soundboard-aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'soundboard-aws-secret-key',  variable: 'AWS_SECRET_ACCESS_KEY'),
+                        string(credentialsId: 'soundboard-aws-region',      variable: 'AWS_REGION'),
+                        string(credentialsId: 'soundboard-s3-endpoint',     variable: 'S3_ENDPOINT'),
+                        string(credentialsId: 'soundboard-s3-bucket',       variable: 'S3_BUCKET_NAME'),
+                        string(credentialsId: 'soundboard-s3-base-url',     variable: 'S3_BASE_URL'),
+                        string(credentialsId: 'soundboard-neon-db-url',     variable: 'NEON_DB_URL')
+                    ]) {
+                        sh """
+                            echo "Running S3 connection test..."
+                            docker run --rm \
+                                -e AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID \
+                                -e AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY \
+                                -e AWS_REGION=\$AWS_REGION \
+                                -e S3_ENDPOINT=\$S3_ENDPOINT \
+                                -e S3_BUCKET_NAME=\$S3_BUCKET_NAME \
+                                -e S3_BASE_URL=\$S3_BASE_URL \
+                                -e S3_FOLDER= \
+                                -v ${WORKSPACE}:/app \
+                                -w /app \
+                                node:24-alpine \
+                                sh -c "npm install -g pnpm --silent && pnpm install --silent && pnpm run test:s3"
+
+                            echo "Running Database connection test..."
+                            docker run --rm \
+                                -e NEON_DB_URL=\$NEON_DB_URL \
+                                -v ${WORKSPACE}:/app \
+                                -w /app \
+                                node:24-alpine \
+                                sh -c "npm install -g pnpm --silent && pnpm install --silent && pnpm run test:db"
+                        """
+                    }
+                }
+            }
+        }
+
         stage('Build Image') {
             steps {
                 script {
