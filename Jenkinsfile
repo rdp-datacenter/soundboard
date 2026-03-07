@@ -102,9 +102,13 @@ pipeline {
                     ]) {
                         withEnv(["BUILD_IMAGE_NAME=${IMAGE_NAME}", "BUILD_IMAGE_TAG=${IMAGE_TAG}"]) {
                             sh '''
+                                echo "Pulling latest image for cache..."
+                                docker pull $BUILD_IMAGE_NAME:latest || true
+
                                 echo "Building Docker image (includes tests)..."
 
                                 docker build \
+                                    --cache-from $BUILD_IMAGE_NAME:latest \
                                     --build-arg AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
                                     --build-arg AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
                                     --build-arg AWS_REGION=$AWS_REGION \
