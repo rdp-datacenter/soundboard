@@ -29,7 +29,7 @@ ARG S3_FOLDER
 ARG NEON_DB_URL
 
 # Run tests before building
-RUN pnpm run test:s3 && pnpm run test:db
+RUN echo "S3_ENDPOINT=$S3_ENDPOINT" && echo "S3_BUCKET_NAME=$S3_BUCKET_NAME" && pnpm run test:s3 && pnpm run test:db
 
 # Build Bot
 RUN pnpm run build
