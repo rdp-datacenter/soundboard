@@ -18,6 +18,19 @@ RUN pnpm install --frozen-lockfile
 # Copy source code
 COPY . .
 
+# Test args (passed at build time, not stored in final image)
+ARG AWS_ACCESS_KEY_ID
+ARG AWS_SECRET_ACCESS_KEY
+ARG AWS_REGION
+ARG S3_ENDPOINT
+ARG S3_BUCKET_NAME
+ARG S3_BASE_URL
+ARG S3_FOLDER
+ARG NEON_DB_URL
+
+# Run tests before building
+RUN pnpm run test:s3 && pnpm run test:db
+
 # Build Bot
 RUN pnpm run build
 

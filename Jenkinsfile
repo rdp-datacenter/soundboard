@@ -88,7 +88,7 @@ pipeline {
             }
         }
 
-        stage('Run Tests') {
+        stage('Build Image') {
             steps {
                 script {
                     withCredentials([
@@ -100,47 +100,25 @@ pipeline {
                         string(credentialsId: 'soundboard-s3-base-url',     variable: 'S3_BASE_URL'),
                         string(credentialsId: 'soundboard-neon-db-url',     variable: 'NEON_DB_URL')
                     ]) {
-                        sh '''
-                            echo "Running S3 connection test..."
-                            docker run --rm \
-                                -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
-                                -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
-                                -e AWS_REGION=$AWS_REGION \
-                                -e S3_ENDPOINT=$S3_ENDPOINT \
-                                -e S3_BUCKET_NAME=$S3_BUCKET_NAME \
-                                -e S3_BASE_URL=$S3_BASE_URL \
-                                -e S3_FOLDER= \
-                                -v $WORKSPACE:/app \
-                                -w /app \
-                                node:24-alpine \
-                                sh -c 'npm install -g pnpm --silent && pnpm install --silent && pnpm run test:s3'
+                        sh """
+                            echo "Building Docker image (includes tests)..."
 
-                            echo "Running Database connection test..."
-                            docker run --rm \
-                                -e NEON_DB_URL=$NEON_DB_URL \
-                                -v $WORKSPACE:/app \
-                                -w /app \
-                                node:24-alpine \
-                                sh -c 'npm install -g pnpm --silent && pnpm install --silent && pnpm run test:db'
-                        '''
+                            docker build \\
+                                --build-arg AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID \\
+                                --build-arg AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY \\
+                                --build-arg AWS_REGION=\$AWS_REGION \\
+                                --build-arg S3_ENDPOINT=\$S3_ENDPOINT \\
+                                --build-arg S3_BUCKET_NAME=\$S3_BUCKET_NAME \\
+                                --build-arg S3_BASE_URL=\$S3_BASE_URL \\
+                                --build-arg S3_FOLDER= \\
+                                --build-arg NEON_DB_URL=\$NEON_DB_URL \\
+                                -t ${IMAGE_NAME}:${IMAGE_TAG} \\
+                                -t ${IMAGE_NAME}:latest \\
+                                .
+
+                            echo "Docker image built successfully: ${IMAGE_NAME}:${IMAGE_TAG}"
+                        """
                     }
-                }
-            }
-        }
-
-        stage('Build Image') {
-            steps {
-                script {
-                    sh """
-                        echo "Building Docker image..."
-
-                        docker build \
-                            -t ${IMAGE_NAME}:${IMAGE_TAG} \
-                            -t ${IMAGE_NAME}:latest \
-                            .
-
-                        echo "Docker image built successfully: ${IMAGE_NAME}:${IMAGE_TAG}"
-                    """
                 }
             }
         }
