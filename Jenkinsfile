@@ -64,7 +64,9 @@ pipeline {
                         'soundboard-s3-endpoint',
                         'soundboard-s3-bucket',
                         'soundboard-s3-base-url',
-                        'soundboard-neon-db-url'
+                        'soundboard-postgres-user',
+                        'soundboard-postgres-password',
+                        'soundboard-postgres-db'
                     ]
 
                     for (credId in requiredCreds) {
@@ -97,8 +99,7 @@ pipeline {
                         string(credentialsId: 'soundboard-aws-region',      variable: 'AWS_REGION'),
                         string(credentialsId: 'soundboard-s3-endpoint',     variable: 'S3_ENDPOINT'),
                         string(credentialsId: 'soundboard-s3-bucket',       variable: 'S3_BUCKET_NAME'),
-                        string(credentialsId: 'soundboard-s3-base-url',     variable: 'S3_BASE_URL'),
-                        string(credentialsId: 'soundboard-neon-db-url',     variable: 'NEON_DB_URL')
+                        string(credentialsId: 'soundboard-s3-base-url',     variable: 'S3_BASE_URL')
                     ]) {
                         withEnv(["BUILD_IMAGE_NAME=${IMAGE_NAME}", "BUILD_IMAGE_TAG=${IMAGE_TAG}"]) {
                             sh '''
@@ -116,7 +117,6 @@ pipeline {
                                     --build-arg S3_BUCKET_NAME=$S3_BUCKET_NAME \
                                     --build-arg S3_BASE_URL=$S3_BASE_URL \
                                     --build-arg S3_FOLDER= \
-                                    --build-arg NEON_DB_URL=$NEON_DB_URL \
                                     -t $BUILD_IMAGE_NAME:$BUILD_IMAGE_TAG \
                                     -t $BUILD_IMAGE_NAME:latest \
                                     .
@@ -160,17 +160,61 @@ pipeline {
                             docker network create ${NETWORK_NAME}
                     """
 
-                    // Start new container with credentials
+                    // Ensure postgres container is running (persistent — not recreated on each deploy)
                     withCredentials([
-                        string(credentialsId: 'soundboard-discord-token',  variable: 'DISCORD_TOKEN'),
-                        string(credentialsId: 'soundboard-client-id',       variable: 'CLIENT_ID'),
-                        string(credentialsId: 'soundboard-aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
-                        string(credentialsId: 'soundboard-aws-secret-key',  variable: 'AWS_SECRET_ACCESS_KEY'),
-                        string(credentialsId: 'soundboard-aws-region',      variable: 'AWS_REGION'),
-                        string(credentialsId: 'soundboard-s3-endpoint',     variable: 'S3_ENDPOINT'),
-                        string(credentialsId: 'soundboard-s3-bucket',       variable: 'S3_BUCKET_NAME'),
-                        string(credentialsId: 'soundboard-s3-base-url',     variable: 'S3_BASE_URL'),
-                        string(credentialsId: 'soundboard-neon-db-url',     variable: 'NEON_DB_URL')
+                        string(credentialsId: 'soundboard-postgres-user',     variable: 'POSTGRES_USER'),
+                        string(credentialsId: 'soundboard-postgres-password', variable: 'POSTGRES_PASSWORD'),
+                        string(credentialsId: 'soundboard-postgres-db',       variable: 'POSTGRES_DB')
+                    ]) {
+                        sh """
+                            if ! docker ps --format '{{.Names}}' | grep -q "^soundboard-postgres\$"; then
+                                echo "Starting postgres container..."
+
+                                # Remove stopped container if it exists
+                                docker rm -f soundboard-postgres 2>/dev/null || true
+
+                                docker run -d \
+                                    --name soundboard-postgres \
+                                    --restart unless-stopped \
+                                    --network ${NETWORK_NAME} \
+                                    -e POSTGRES_USER=\$POSTGRES_USER \
+                                    -e POSTGRES_PASSWORD=\$POSTGRES_PASSWORD \
+                                    -e POSTGRES_DB=\$POSTGRES_DB \
+                                    -v soundboard_postgres-data:/var/lib/postgresql/data \
+                                    postgres:17-alpine
+
+                                echo "Waiting for postgres to be ready..."
+                                for i in \$(seq 1 30); do
+                                    if docker exec soundboard-postgres pg_isready -U \$POSTGRES_USER > /dev/null 2>&1; then
+                                        echo "Postgres is ready"
+                                        break
+                                    fi
+                                    if [ \$i -eq 30 ]; then
+                                        echo "ERROR: Postgres did not become ready in time"
+                                        docker logs soundboard-postgres 2>&1
+                                        exit 1
+                                    fi
+                                    sleep 2
+                                done
+                            else
+                                echo "Postgres container already running, skipping start"
+                            fi
+                        """
+                    }
+
+                    // Start new bot container with credentials
+                    withCredentials([
+                        string(credentialsId: 'soundboard-discord-token',     variable: 'DISCORD_TOKEN'),
+                        string(credentialsId: 'soundboard-client-id',         variable: 'CLIENT_ID'),
+                        string(credentialsId: 'soundboard-aws-access-key',    variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'soundboard-aws-secret-key',    variable: 'AWS_SECRET_ACCESS_KEY'),
+                        string(credentialsId: 'soundboard-aws-region',        variable: 'AWS_REGION'),
+                        string(credentialsId: 'soundboard-s3-endpoint',       variable: 'S3_ENDPOINT'),
+                        string(credentialsId: 'soundboard-s3-bucket',         variable: 'S3_BUCKET_NAME'),
+                        string(credentialsId: 'soundboard-s3-base-url',       variable: 'S3_BASE_URL'),
+                        string(credentialsId: 'soundboard-postgres-user',     variable: 'POSTGRES_USER'),
+                        string(credentialsId: 'soundboard-postgres-password', variable: 'POSTGRES_PASSWORD'),
+                        string(credentialsId: 'soundboard-postgres-db',       variable: 'POSTGRES_DB')
                     ]) {
                         sh """
                             echo "Starting new container..."
@@ -193,7 +237,7 @@ pipeline {
                                 -e S3_BUCKET_NAME=\$S3_BUCKET_NAME \
                                 -e S3_BASE_URL=\$S3_BASE_URL \
                                 -e S3_FOLDER= \
-                                -e NEON_DB_URL=\$NEON_DB_URL \
+                                -e DATABASE_URL=postgresql://\$POSTGRES_USER:\$POSTGRES_PASSWORD@soundboard-postgres:5432/\$POSTGRES_DB \
                                 -e NODE_ENV=production \
                                 ${IMAGE_NAME}:${IMAGE_TAG}
 
