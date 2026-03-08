@@ -27,12 +27,11 @@ ARG S3_ENDPOINT
 ARG S3_BUCKET_NAME
 ARG S3_BASE_URL
 ARG S3_FOLDER
-ARG DATABASE_URL
 
-# Run tests before building (alias neutral ARG names back to expected env var names)
+# Run S3 test before building (alias neutral ARG names back to expected env var names)
 RUN AWS_ACCESS_KEY_ID=$BUILD_S3_KEY_ID \
     AWS_SECRET_ACCESS_KEY=$BUILD_S3_SECRET \
-    pnpm run test:s3 && pnpm run test:db
+    pnpm run test:s3
 
 # Build Bot
 RUN pnpm run build

@@ -151,10 +151,7 @@ pipeline {
                         string(credentialsId: 'soundboard-aws-region',        variable: 'AWS_REGION'),
                         string(credentialsId: 'soundboard-s3-endpoint',       variable: 'S3_ENDPOINT'),
                         string(credentialsId: 'soundboard-s3-bucket',         variable: 'S3_BUCKET_NAME'),
-                        string(credentialsId: 'soundboard-s3-base-url',       variable: 'S3_BASE_URL'),
-                        string(credentialsId: 'soundboard-postgres-user',     variable: 'POSTGRES_USER'),
-                        string(credentialsId: 'soundboard-postgres-password', variable: 'POSTGRES_PASSWORD'),
-                        string(credentialsId: 'soundboard-postgres-db',       variable: 'POSTGRES_DB')
+                        string(credentialsId: 'soundboard-s3-base-url',       variable: 'S3_BASE_URL')
                     ]) {
                         withEnv(["BUILD_IMAGE_NAME=${IMAGE_NAME}", "BUILD_IMAGE_TAG=${IMAGE_TAG}"]) {
                             sh '''
@@ -164,7 +161,6 @@ pipeline {
                                 echo "Building Docker image (includes tests)..."
 
                                 docker build \
-                                    --network soundboard_bot-network \
                                     --cache-from $BUILD_IMAGE_NAME:latest \
                                     --build-arg BUILD_S3_KEY_ID=$AWS_ACCESS_KEY_ID \
                                     --build-arg BUILD_S3_SECRET=$AWS_SECRET_ACCESS_KEY \
@@ -173,7 +169,6 @@ pipeline {
                                     --build-arg S3_BUCKET_NAME=$S3_BUCKET_NAME \
                                     --build-arg S3_BASE_URL=$S3_BASE_URL \
                                     --build-arg S3_FOLDER= \
-                                    --build-arg DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@soundboard-postgres:5432/$POSTGRES_DB \
                                     -t $BUILD_IMAGE_NAME:$BUILD_IMAGE_TAG \
                                     -t $BUILD_IMAGE_NAME:latest \
                                     .
@@ -271,6 +266,30 @@ pipeline {
                                     docker logs $BOT_CONTAINER 2>&1
                                     exit 1
                                 fi
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Test Database') {
+            steps {
+                script {
+                    withEnv(["DB_NETWORK=${NETWORK_NAME}", "DB_IMAGE=${IMAGE_NAME}:${IMAGE_TAG}"]) {
+                        withCredentials([
+                            string(credentialsId: 'soundboard-postgres-user',     variable: 'POSTGRES_USER'),
+                            string(credentialsId: 'soundboard-postgres-password', variable: 'POSTGRES_PASSWORD'),
+                            string(credentialsId: 'soundboard-postgres-db',       variable: 'POSTGRES_DB')
+                        ]) {
+                            sh '''
+                                echo "Running database tests..."
+                                docker run --rm \
+                                    --network $DB_NETWORK \
+                                    -e DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@soundboard-postgres:5432/$POSTGRES_DB \
+                                    $DB_IMAGE \
+                                    pnpm run test:db
+                                echo "Database tests passed"
                             '''
                         }
                     }
