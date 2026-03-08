@@ -5,14 +5,14 @@ async function testDatabaseConnection() {
   console.log('🗄️ Testing Database Connection...\n');
 
   // Check environment variables
-  if (!process.env.NEON_DB_URL) {
-    console.error('❌ NEON_DB_URL environment variable is not set');
-    console.error('💡 Please add NEON_DB_URL to your .env file');
+  if (!process.env.DATABASE_URL) {
+    console.error('❌ DATABASE_URL environment variable is not set');
+    console.error('💡 Please add DATABASE_URL to your .env file');
     process.exit(1);
   }
 
   // Sanitize URL for logging (hide credentials)
-  const dbUrl = process.env.NEON_DB_URL;
+  const dbUrl = process.env.DATABASE_URL;
   const sanitizedUrl = dbUrl.replace(/\/\/.*@/, '//***:***@');
   console.log(`🔗 Database URL: ${sanitizedUrl}`);
 

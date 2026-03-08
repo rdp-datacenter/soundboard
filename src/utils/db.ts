@@ -15,10 +15,7 @@ export class DatabaseService {
 
   constructor() {
     this.pool = new Pool({
-      connectionString: process.env.NEON_DB_URL,
-      ssl: {
-        rejectUnauthorized: false, // Required for Neon connections
-      },
+      connectionString: process.env.DATABASE_URL,
       max: 20, // Maximum connection pool size
       idleTimeoutMillis: 30000, // How long a client can stay idle before being closed
     });

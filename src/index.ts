@@ -31,7 +31,7 @@ function validateEnvironment(): void {
     'S3_BUCKET_NAME', 
     'S3_BASE_URL'
   ];
-  const requiredDbVars = ['NEON_DB_URL'];
+  const requiredDbVars = ['DATABASE_URL'];
   
   const missingDiscord = requiredDiscordVars.filter(key => !process.env[key]);
   const missingS3 = requiredS3Vars.filter(key => !process.env[key]);
@@ -50,7 +50,7 @@ function validateEnvironment(): void {
 
   if (missingDb.length > 0) {
     console.error(`❌ Missing required Database environment variables: ${missingDb.join(', ')}`);
-    console.error('💡 For database integration, ensure NEON_DB_URL is set in your .env file');
+    console.error('💡 For database integration, ensure DATABASE_URL is set in your .env file');
     process.exit(1);
   }
 
@@ -66,7 +66,7 @@ function validateEnvironment(): void {
   }
 
   // Log database connection (without sensitive details)
-  const dbUrl = process.env.NEON_DB_URL || '';
+  const dbUrl = process.env.DATABASE_URL || '';
   const sanitizedDbUrl = dbUrl.replace(/\/\/.*@/, '//***:***@');
   console.log(`🗄️ Database connection: ${sanitizedDbUrl}`);
 }
