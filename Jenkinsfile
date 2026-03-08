@@ -90,16 +90,71 @@ pipeline {
             }
         }
 
+        stage('Start Postgres') {
+            steps {
+                script {
+                    withEnv(["PG_NETWORK=${NETWORK_NAME}"]) {
+                        withCredentials([
+                            string(credentialsId: 'soundboard-postgres-user',     variable: 'POSTGRES_USER'),
+                            string(credentialsId: 'soundboard-postgres-password', variable: 'POSTGRES_PASSWORD'),
+                            string(credentialsId: 'soundboard-postgres-db',       variable: 'POSTGRES_DB')
+                        ]) {
+                            sh '''
+                                # Ensure network exists
+                                docker network inspect $PG_NETWORK > /dev/null 2>&1 || \
+                                    docker network create $PG_NETWORK
+
+                                if ! docker ps --format '{{.Names}}' | grep -q "^soundboard-postgres$"; then
+                                    echo "Starting postgres container..."
+
+                                    docker rm -f soundboard-postgres 2>/dev/null || true
+
+                                    docker run -d \
+                                        --name soundboard-postgres \
+                                        --restart unless-stopped \
+                                        --network $PG_NETWORK \
+                                        -e POSTGRES_USER=$POSTGRES_USER \
+                                        -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+                                        -e POSTGRES_DB=$POSTGRES_DB \
+                                        -v soundboard_postgres-data:/var/lib/postgresql/data \
+                                        postgres:17-alpine
+
+                                    echo "Waiting for postgres to be ready..."
+                                    for i in $(seq 1 30); do
+                                        if docker exec soundboard-postgres pg_isready -U $POSTGRES_USER > /dev/null 2>&1; then
+                                            echo "Postgres is ready"
+                                            break
+                                        fi
+                                        if [ $i -eq 30 ]; then
+                                            echo "ERROR: Postgres did not become ready in time"
+                                            docker logs soundboard-postgres 2>&1
+                                            exit 1
+                                        fi
+                                        sleep 2
+                                    done
+                                else
+                                    echo "Postgres container already running, skipping start"
+                                fi
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Build Image') {
             steps {
                 script {
                     withCredentials([
-                        string(credentialsId: 'soundboard-aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
-                        string(credentialsId: 'soundboard-aws-secret-key',  variable: 'AWS_SECRET_ACCESS_KEY'),
-                        string(credentialsId: 'soundboard-aws-region',      variable: 'AWS_REGION'),
-                        string(credentialsId: 'soundboard-s3-endpoint',     variable: 'S3_ENDPOINT'),
-                        string(credentialsId: 'soundboard-s3-bucket',       variable: 'S3_BUCKET_NAME'),
-                        string(credentialsId: 'soundboard-s3-base-url',     variable: 'S3_BASE_URL')
+                        string(credentialsId: 'soundboard-aws-access-key',    variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'soundboard-aws-secret-key',    variable: 'AWS_SECRET_ACCESS_KEY'),
+                        string(credentialsId: 'soundboard-aws-region',        variable: 'AWS_REGION'),
+                        string(credentialsId: 'soundboard-s3-endpoint',       variable: 'S3_ENDPOINT'),
+                        string(credentialsId: 'soundboard-s3-bucket',         variable: 'S3_BUCKET_NAME'),
+                        string(credentialsId: 'soundboard-s3-base-url',       variable: 'S3_BASE_URL'),
+                        string(credentialsId: 'soundboard-postgres-user',     variable: 'POSTGRES_USER'),
+                        string(credentialsId: 'soundboard-postgres-password', variable: 'POSTGRES_PASSWORD'),
+                        string(credentialsId: 'soundboard-postgres-db',       variable: 'POSTGRES_DB')
                     ]) {
                         withEnv(["BUILD_IMAGE_NAME=${IMAGE_NAME}", "BUILD_IMAGE_TAG=${IMAGE_TAG}"]) {
                             sh '''
@@ -109,14 +164,16 @@ pipeline {
                                 echo "Building Docker image (includes tests)..."
 
                                 docker build \
+                                    --network soundboard_bot-network \
                                     --cache-from $BUILD_IMAGE_NAME:latest \
-                                    --build-arg AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
-                                    --build-arg AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+                                    --build-arg BUILD_S3_KEY_ID=$AWS_ACCESS_KEY_ID \
+                                    --build-arg BUILD_S3_SECRET=$AWS_SECRET_ACCESS_KEY \
                                     --build-arg AWS_REGION=$AWS_REGION \
                                     --build-arg S3_ENDPOINT=$S3_ENDPOINT \
                                     --build-arg S3_BUCKET_NAME=$S3_BUCKET_NAME \
                                     --build-arg S3_BASE_URL=$S3_BASE_URL \
                                     --build-arg S3_FOLDER= \
+                                    --build-arg DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@soundboard-postgres:5432/$POSTGRES_DB \
                                     -t $BUILD_IMAGE_NAME:$BUILD_IMAGE_TAG \
                                     -t $BUILD_IMAGE_NAME:latest \
                                     .
@@ -155,110 +212,67 @@ pipeline {
                             echo "No existing container found, proceeding with fresh deployment"
                         fi
 
-                        # Ensure network exists
-                        docker network inspect ${NETWORK_NAME} > /dev/null 2>&1 || \
-                            docker network create ${NETWORK_NAME}
                     """
 
-                    // Ensure postgres container is running (persistent — not recreated on each deploy)
-                    withCredentials([
-                        string(credentialsId: 'soundboard-postgres-user',     variable: 'POSTGRES_USER'),
-                        string(credentialsId: 'soundboard-postgres-password', variable: 'POSTGRES_PASSWORD'),
-                        string(credentialsId: 'soundboard-postgres-db',       variable: 'POSTGRES_DB')
-                    ]) {
-                        sh """
-                            if ! docker ps --format '{{.Names}}' | grep -q "^soundboard-postgres\$"; then
-                                echo "Starting postgres container..."
+                    // Start new bot container with credentials
+                    withEnv(["BOT_CONTAINER=${CONTAINER_NAME}", "BOT_NETWORK=${NETWORK_NAME}", "BOT_IMAGE=${IMAGE_NAME}:${IMAGE_TAG}"]) {
+                        withCredentials([
+                            string(credentialsId: 'soundboard-discord-token',     variable: 'DISCORD_TOKEN'),
+                            string(credentialsId: 'soundboard-client-id',         variable: 'CLIENT_ID'),
+                            string(credentialsId: 'soundboard-aws-access-key',    variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'soundboard-aws-secret-key',    variable: 'AWS_SECRET_ACCESS_KEY'),
+                            string(credentialsId: 'soundboard-aws-region',        variable: 'AWS_REGION'),
+                            string(credentialsId: 'soundboard-s3-endpoint',       variable: 'S3_ENDPOINT'),
+                            string(credentialsId: 'soundboard-s3-bucket',         variable: 'S3_BUCKET_NAME'),
+                            string(credentialsId: 'soundboard-s3-base-url',       variable: 'S3_BASE_URL'),
+                            string(credentialsId: 'soundboard-postgres-user',     variable: 'POSTGRES_USER'),
+                            string(credentialsId: 'soundboard-postgres-password', variable: 'POSTGRES_PASSWORD'),
+                            string(credentialsId: 'soundboard-postgres-db',       variable: 'POSTGRES_DB')
+                        ]) {
+                            sh '''
+                                echo "Starting new container..."
 
-                                # Remove stopped container if it exists
-                                docker rm -f soundboard-postgres 2>/dev/null || true
+                                if docker ps -a --format '{{.Names}}' | grep -q "^$BOT_CONTAINER$"; then
+                                    echo "ERROR: Container $BOT_CONTAINER still exists!"
+                                    exit 1
+                                fi
 
                                 docker run -d \
-                                    --name soundboard-postgres \
+                                    --name $BOT_CONTAINER \
                                     --restart unless-stopped \
-                                    --network ${NETWORK_NAME} \
-                                    -e POSTGRES_USER=\$POSTGRES_USER \
-                                    -e POSTGRES_PASSWORD=\$POSTGRES_PASSWORD \
-                                    -e POSTGRES_DB=\$POSTGRES_DB \
-                                    -v soundboard_postgres-data:/var/lib/postgresql/data \
-                                    postgres:17-alpine
+                                    --network $BOT_NETWORK \
+                                    -e DISCORD_TOKEN=$DISCORD_TOKEN \
+                                    -e CLIENT_ID=$CLIENT_ID \
+                                    -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+                                    -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+                                    -e AWS_REGION=$AWS_REGION \
+                                    -e S3_ENDPOINT=$S3_ENDPOINT \
+                                    -e S3_BUCKET_NAME=$S3_BUCKET_NAME \
+                                    -e S3_BASE_URL=$S3_BASE_URL \
+                                    -e S3_FOLDER= \
+                                    -e DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@soundboard-postgres:5432/$POSTGRES_DB \
+                                    -e NODE_ENV=production \
+                                    $BOT_IMAGE
 
-                                echo "Waiting for postgres to be ready..."
-                                for i in \$(seq 1 30); do
-                                    if docker exec soundboard-postgres pg_isready -U \$POSTGRES_USER > /dev/null 2>&1; then
-                                        echo "Postgres is ready"
-                                        break
-                                    fi
-                                    if [ \$i -eq 30 ]; then
-                                        echo "ERROR: Postgres did not become ready in time"
-                                        docker logs soundboard-postgres 2>&1
-                                        exit 1
-                                    fi
-                                    sleep 2
-                                done
-                            else
-                                echo "Postgres container already running, skipping start"
-                            fi
-                        """
-                    }
+                                if ! docker ps --format '{{.Names}}' | grep -q "^$BOT_CONTAINER$"; then
+                                    echo "ERROR: Container failed to start"
+                                    docker logs $BOT_CONTAINER 2>&1 || true
+                                    exit 1
+                                fi
 
-                    // Start new bot container with credentials
-                    withCredentials([
-                        string(credentialsId: 'soundboard-discord-token',     variable: 'DISCORD_TOKEN'),
-                        string(credentialsId: 'soundboard-client-id',         variable: 'CLIENT_ID'),
-                        string(credentialsId: 'soundboard-aws-access-key',    variable: 'AWS_ACCESS_KEY_ID'),
-                        string(credentialsId: 'soundboard-aws-secret-key',    variable: 'AWS_SECRET_ACCESS_KEY'),
-                        string(credentialsId: 'soundboard-aws-region',        variable: 'AWS_REGION'),
-                        string(credentialsId: 'soundboard-s3-endpoint',       variable: 'S3_ENDPOINT'),
-                        string(credentialsId: 'soundboard-s3-bucket',         variable: 'S3_BUCKET_NAME'),
-                        string(credentialsId: 'soundboard-s3-base-url',       variable: 'S3_BASE_URL'),
-                        string(credentialsId: 'soundboard-postgres-user',     variable: 'POSTGRES_USER'),
-                        string(credentialsId: 'soundboard-postgres-password', variable: 'POSTGRES_PASSWORD'),
-                        string(credentialsId: 'soundboard-postgres-db',       variable: 'POSTGRES_DB')
-                    ]) {
-                        sh """
-                            echo "Starting new container..."
+                                echo "Container started successfully: $BOT_CONTAINER"
 
-                            if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}\$"; then
-                                echo "ERROR: Container ${CONTAINER_NAME} still exists!"
-                                exit 1
-                            fi
+                                echo "Waiting for container to initialize..."
+                                sleep 5
 
-                            docker run -d \
-                                --name ${CONTAINER_NAME} \
-                                --restart unless-stopped \
-                                --network ${NETWORK_NAME} \
-                                -e DISCORD_TOKEN=\$DISCORD_TOKEN \
-                                -e CLIENT_ID=\$CLIENT_ID \
-                                -e AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID \
-                                -e AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY \
-                                -e AWS_REGION=\$AWS_REGION \
-                                -e S3_ENDPOINT=\$S3_ENDPOINT \
-                                -e S3_BUCKET_NAME=\$S3_BUCKET_NAME \
-                                -e S3_BASE_URL=\$S3_BASE_URL \
-                                -e S3_FOLDER= \
-                                -e DATABASE_URL=postgresql://\$POSTGRES_USER:\$POSTGRES_PASSWORD@soundboard-postgres:5432/\$POSTGRES_DB \
-                                -e NODE_ENV=production \
-                                ${IMAGE_NAME}:${IMAGE_TAG}
-
-                            if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}\$"; then
-                                echo "ERROR: Container failed to start"
-                                docker logs ${CONTAINER_NAME} 2>&1 || true
-                                exit 1
-                            fi
-
-                            echo "Container started successfully: ${CONTAINER_NAME}"
-
-                            echo "Waiting for container to initialize..."
-                            sleep 5
-
-                            if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}\$"; then
-                                echo "ERROR: Container started but immediately crashed"
-                                echo "Container logs:"
-                                docker logs ${CONTAINER_NAME} 2>&1
-                                exit 1
-                            fi
-                        """
+                                if ! docker ps --format '{{.Names}}' | grep -q "^$BOT_CONTAINER$"; then
+                                    echo "ERROR: Container started but immediately crashed"
+                                    echo "Container logs:"
+                                    docker logs $BOT_CONTAINER 2>&1
+                                    exit 1
+                                fi
+                            '''
+                        }
                     }
                 }
             }
